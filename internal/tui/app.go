@@ -258,6 +258,7 @@ func (m Model) renderVelocity(width, height int) string {
 	values := dateValuesToInts(m.snapshot.Commits.Daily)
 	avg, peak := avgAndPeak(values, windowDays(m.currentWindow()))
 	trend := trendLabel(values)
+	trend = m.colorizeTrend(trend)
 	spark := sparkline(values, max(18, width-4))
 	rangeLabel := dateRangeLabel(m.snapshot.Commits.Daily)
 	heatmap := renderWeekHeatmap(m.snapshot.Commits.Daily, 5)
@@ -272,7 +273,7 @@ func (m Model) renderVelocity(width, height int) string {
 		"     M  T  W  T  F  S  S",
 	}
 	lines = append(lines, heatmap...)
-	lines = append(lines, "", fmt.Sprintf("Streak: %d days", m.snapshot.Overview.CurrentStreak))
+	lines = append(lines, "", fmt.Sprintf("Streak: %s", m.theme.Positive.Render(fmt.Sprintf("%d days", m.snapshot.Overview.CurrentStreak))))
 	return strings.Join(trimLines(lines, height), "\n")
 }
 
@@ -282,8 +283,8 @@ func (m Model) renderAuthors(width, height int) string {
 	maxActive := max(1, max(thisWeek, lastWeek))
 
 	lines := []string{
-		fmt.Sprintf("This Week  %s  %d authors", progressBar(thisWeek, maxActive, clamp(width-28, 8, 24)), thisWeek),
-		fmt.Sprintf("Last Week  %s  %d authors", progressBar(lastWeek, maxActive, clamp(width-28, 8, 24)), lastWeek),
+		fmt.Sprintf("This Week  %s  %s", progressBar(thisWeek, maxActive, clamp(width-28, 8, 24)), m.theme.Positive.Render(fmt.Sprintf("%d authors", thisWeek))),
+		fmt.Sprintf("Last Week  %s  %s", progressBar(lastWeek, maxActive, clamp(width-28, 8, 24)), m.theme.Muted.Render(fmt.Sprintf("%d authors", lastWeek))),
 		"",
 		"LEADERBOARD",
 	}
@@ -304,13 +305,16 @@ func (m Model) renderAuthors(width, height int) string {
 	}
 
 	risk := "healthy"
+	riskStyle := m.theme.Positive
 	switch {
 	case m.snapshot.Authors.BusFactor <= 2:
 		risk = "fragile"
+		riskStyle = m.theme.Danger
 	case m.snapshot.Authors.BusFactor <= 4:
 		risk = "moderate"
+		riskStyle = m.theme.Warning
 	}
-	lines = append(lines, "", fmt.Sprintf("Bus Factor  %s  %d  %s", progressBar(m.snapshot.Authors.BusFactor, max(6, m.snapshot.Authors.BusFactor), 10), m.snapshot.Authors.BusFactor, risk))
+	lines = append(lines, "", fmt.Sprintf("Bus Factor  %s  %d  %s", progressBar(m.snapshot.Authors.BusFactor, max(6, m.snapshot.Authors.BusFactor), 10), m.snapshot.Authors.BusFactor, riskStyle.Render(risk)))
 	return strings.Join(trimLines(lines, height), "\n")
 }
 
@@ -328,7 +332,7 @@ func (m Model) renderFiles(width, height int) string {
 			break
 		}
 		churn := file.Additions + file.Deletions
-		lines = append(lines, fmt.Sprintf("%-24s %s %3d %+5d", truncate(file.Path, 24), progressBar(file.Touches, maxTouches, barWidth), file.Touches, churn))
+		lines = append(lines, fmt.Sprintf("%-24s %s %3d %s", truncate(file.Path, 24), progressBar(file.Touches, maxTouches, barWidth), file.Touches, m.theme.Warning.Render(fmt.Sprintf("+%d", churn))))
 	}
 
 	lines = append(lines, "", "Hot Directories")
@@ -357,7 +361,7 @@ func (m Model) renderPRs(width, height int) string {
 
 	lines := []string{"Median Time to Merge"}
 	for _, window := range m.prs.Windows {
-		lines = append(lines, fmt.Sprintf("%-4s %8s  review %-5s  merged %2d", window.Label, compactDuration(window.MedianCycleTime), compactDuration(window.MedianReviewTime), window.MergedCount))
+		lines = append(lines, fmt.Sprintf("%-4s %8s  review %-5s  merged %s", window.Label, compactDuration(window.MedianCycleTime), compactDuration(window.MedianReviewTime), m.theme.Positive.Render(fmt.Sprintf("%2d", window.MergedCount))))
 	}
 
 	cycleValues := weeklyCycleToHours(m.prs.WeeklyCycle)
@@ -370,7 +374,11 @@ func (m Model) renderPRs(width, height int) string {
 			stale++
 		}
 	}
-	lines = append(lines, fmt.Sprintf("Open PRs     %2d  (%d stale)", len(m.prs.OpenPullRequests), stale))
+	staleLabel := m.theme.Positive.Render(fmt.Sprintf("%d stale", stale))
+	if stale > 0 {
+		staleLabel = m.theme.Warning.Render(fmt.Sprintf("%d stale", stale))
+	}
+	lines = append(lines, fmt.Sprintf("Open PRs     %2d  (%s)", len(m.prs.OpenPullRequests), staleLabel))
 	for idx, pr := range m.prs.OpenPullRequests {
 		if idx >= 2 {
 			break
@@ -382,7 +390,7 @@ func (m Model) renderPRs(width, height int) string {
 
 func (m Model) renderBranches(width, height int) string {
 	lines := []string{
-		fmt.Sprintf("Active: %d   Stale: %d   Last tag: %s", len(m.snapshot.Branches.ActiveBranches), len(m.snapshot.Branches.StaleBranches), fallback(m.snapshot.Branches.LastTag, "none")),
+		fmt.Sprintf("Active: %s   Stale: %s   Last tag: %s", m.theme.Positive.Render(fmt.Sprintf("%d", len(m.snapshot.Branches.ActiveBranches))), m.theme.Warning.Render(fmt.Sprintf("%d", len(m.snapshot.Branches.StaleBranches))), fallback(m.snapshot.Branches.LastTag, "none")),
 		fmt.Sprintf("Release cadence: %s", compactDuration(time.Duration(m.snapshot.Branches.ReleaseCadenceDays*24)*time.Hour)),
 		"",
 	}
@@ -410,11 +418,11 @@ func (m Model) renderChurn(width, height int) string {
 	delBar := progressBar(dels, max(1, totalChange), clamp(width-18, 8, 24))
 
 	lines := []string{
-		fmt.Sprintf("Net LOC (%s)   %+d", windowLabel(m.currentWindow()), m.snapshot.Overview.NetLines),
-		fmt.Sprintf("Adds  %s  %d", addBar, adds),
-		fmt.Sprintf("Dels  %s  %d", delBar, dels),
+		fmt.Sprintf("Net LOC (%s)   %s", windowLabel(m.currentWindow()), m.theme.Positive.Render(fmt.Sprintf("%+d", m.snapshot.Overview.NetLines))),
+		fmt.Sprintf("Adds  %s  %s", addBar, m.theme.Positive.Render(fmt.Sprintf("%d", adds))),
+		fmt.Sprintf("Dels  %s  %s", delBar, m.theme.Danger.Render(fmt.Sprintf("%d", dels))),
 		fmt.Sprintf("Change volume  %d lines", totalChange),
-		fmt.Sprintf("Commit quality %s", compactPercent(m.snapshot.Overview.ConventionalCommitShare)),
+		fmt.Sprintf("Commit quality %s", m.colorizePercent(m.snapshot.Overview.ConventionalCommitShare)),
 		"",
 		"Commit Types",
 		renderBreakdownLine(m.snapshot.Overview.ConventionalBreakdown, width),
@@ -629,6 +637,29 @@ func trendLabel(values []int) string {
 		return fmt.Sprintf("↘ %d%%", change)
 	default:
 		return "→ 0%"
+	}
+}
+
+func (m Model) colorizeTrend(label string) string {
+	switch {
+	case strings.HasPrefix(label, "↗"), strings.HasPrefix(label, "→"):
+		return m.theme.Positive.Render(label)
+	case strings.HasPrefix(label, "↘"):
+		return m.theme.Warning.Render(label)
+	default:
+		return label
+	}
+}
+
+func (m Model) colorizePercent(value float64) string {
+	text := compactPercent(value)
+	switch {
+	case value >= 0.7:
+		return m.theme.Positive.Render(text)
+	case value >= 0.35:
+		return m.theme.Warning.Render(text)
+	default:
+		return m.theme.Danger.Render(text)
 	}
 }
 

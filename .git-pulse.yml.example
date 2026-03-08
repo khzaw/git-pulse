@@ -1,0 +1,5 @@
+repo_path: .
+theme: tokyo-night
+refresh_seconds: 60
+default_window: 30d
+

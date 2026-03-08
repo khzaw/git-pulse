@@ -1,0 +1,7 @@
+.DS_Store
+bin/
+dist/
+coverage.out
+TASKS.local.md
+.git-pulse/
+git-pulse

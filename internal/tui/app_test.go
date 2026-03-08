@@ -16,14 +16,14 @@ func TestResolveTheme(t *testing.T) {
 
 	theme, err := ResolveTheme("tokyo-night")
 	require.NoError(t, err)
-	require.Equal(t, "tokyo-night", theme.Name)
+	require.NotZero(t, theme.Frame)
 }
 
-func TestResolveThemeRejectsUnknownTheme(t *testing.T) {
+func TestResolveThemeIgnoresNamedThemes(t *testing.T) {
 	t.Parallel()
 
 	_, err := ResolveTheme("missing")
-	require.Error(t, err)
+	require.NoError(t, err)
 }
 
 func TestViewIncludesLoadedPanels(t *testing.T) {
@@ -31,13 +31,16 @@ func TestViewIncludesLoadedPanels(t *testing.T) {
 
 	model, err := NewModel(config.Default())
 	require.NoError(t, err)
-	model.width = 160
+	model.width = 170
+	model.height = 42
 	model.loading = false
 	model.snapshot = aggregator.Snapshot{
 		Repository: aggregator.RepositorySummary{Path: "/tmp/repo"},
 		Overview: aggregator.Overview{
 			CommitCount:             12,
 			AuthorCount:             3,
+			Additions:               20,
+			Deletions:               8,
 			CurrentStreak:           4,
 			LongestStreak:           6,
 			ConventionalCommitShare: 0.75,
@@ -50,6 +53,7 @@ func TestViewIncludesLoadedPanels(t *testing.T) {
 		},
 		Authors: aggregator.AuthorActivity{
 			ActiveThisWeek:  2,
+			ActiveLastWeek:  1,
 			ActiveThisMonth: 3,
 			BusFactor:       1,
 			Leaderboard:     []aggregator.AuthorSummary{{Name: "Ada", Commits: 5}},
@@ -73,12 +77,13 @@ func TestViewIncludesLoadedPanels(t *testing.T) {
 	}
 
 	view := model.View()
-	require.Contains(t, view, "Overview")
-	require.Contains(t, view, "Commit Velocity")
-	require.Contains(t, view, "Author Activity")
-	require.Contains(t, view, "File Hotspots")
-	require.Contains(t, view, "Branch Health")
-	require.Contains(t, view, "PR Cycle")
+	require.Contains(t, view, "git-pulse")
+	require.Contains(t, view, "COMMIT VELOCITY")
+	require.Contains(t, view, "AUTHORS ACTIVE")
+	require.Contains(t, view, "FILE HOTSPOTS")
+	require.Contains(t, view, "PR CYCLE TIME")
+	require.Contains(t, view, "BRANCH HEALTH")
+	require.Contains(t, view, "CODE CHURN")
 	require.Contains(t, view, "acme/git-pulse")
 }
 
@@ -99,6 +104,6 @@ func TestCompactModeShowsFocusedPanelOnly(t *testing.T) {
 
 	view := model.View()
 	require.Contains(t, view, "panel 3/6")
-	require.Contains(t, view, "Author Activity")
-	require.NotContains(t, view, "Commit Velocity")
+	require.Contains(t, view, "FILE HOTSPOTS")
+	require.NotContains(t, view, "AUTHORS ACTIVE")
 }

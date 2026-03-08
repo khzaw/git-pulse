@@ -72,6 +72,8 @@ func TestAggregateBuildsWindowedSnapshot(t *testing.T) {
 
 	require.Equal(t, 2, snapshot.Overview.CommitCount)
 	require.Equal(t, 2, snapshot.Overview.AuthorCount)
+	require.Equal(t, 17, snapshot.Overview.Additions)
+	require.Equal(t, 4, snapshot.Overview.Deletions)
 	require.Equal(t, 13, snapshot.Overview.NetLines)
 	require.Equal(t, 2, snapshot.Overview.CurrentStreak)
 	require.Equal(t, 2, snapshot.Overview.LongestStreak)
@@ -79,6 +81,7 @@ func TestAggregateBuildsWindowedSnapshot(t *testing.T) {
 
 	require.Len(t, snapshot.Commits.Daily, 2)
 	require.Equal(t, 2, snapshot.Authors.ActiveThisWeek)
+	require.Equal(t, 0, snapshot.Authors.ActiveLastWeek)
 	require.Equal(t, 2, snapshot.Authors.ActiveThisMonth)
 	require.Equal(t, 1, snapshot.Authors.BusFactor)
 	require.Len(t, snapshot.Files.Hotspots, 3)

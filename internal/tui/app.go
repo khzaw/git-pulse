@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"math"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,7 +17,7 @@ import (
 	"git-pulse/internal/remote"
 )
 
-var panelOrder = []string{"overview", "velocity", "authors", "files", "branches", "prs"}
+var panelOrder = []string{"velocity", "authors", "files", "prs", "branches", "churn"}
 
 type dashboardLoadedMsg struct {
 	snapshot aggregator.Snapshot
@@ -50,13 +52,7 @@ func NewModel(cfg config.Config) (Model, error) {
 	}
 
 	index := 1
-	for idx, window := range []aggregator.TimeWindow{
-		aggregator.Window7Days,
-		aggregator.Window30Days,
-		aggregator.Window90Days,
-		aggregator.Window1Year,
-		aggregator.WindowAll,
-	} {
+	for idx, window := range windowOptions() {
 		if string(window) == cfg.DefaultWindow {
 			index = idx
 			break
@@ -67,9 +63,8 @@ func NewModel(cfg config.Config) (Model, error) {
 		cfg:         cfg,
 		theme:       theme,
 		loading:     true,
-		focused:     0,
-		windowIndex: index,
 		status:      "loading repository metrics",
+		windowIndex: index,
 		loader:      dashboard.NewLoader(),
 	}, nil
 }
@@ -91,7 +86,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.warning != "" {
 			m.status = msg.warning
 		} else {
-			m.status = fmt.Sprintf("loaded %d commits for %s window", m.snapshot.Overview.CommitCount, m.currentWindow())
+			m.status = fmt.Sprintf("loaded %d commits for %s", m.snapshot.Overview.CommitCount, windowLabel(m.currentWindow()))
 		}
 	case dashboardErrorMsg:
 		m.loading = false
@@ -107,9 +102,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "1", "2", "3", "4", "5", "6":
 			m.focused = int(msg.String()[0] - '1')
 		case "t":
-			m.windowIndex = (m.windowIndex + 1) % len(m.windows())
+			m.windowIndex = (m.windowIndex + 1) % len(windowOptions())
 			m.loading = true
-			m.status = fmt.Sprintf("reloading %s window", m.currentWindow())
+			m.status = fmt.Sprintf("reloading %s", windowLabel(m.currentWindow()))
 			return m, m.refreshCmd()
 		case "r":
 			m.loading = true
@@ -126,42 +121,23 @@ func (m Model) View() string {
 		m.width = 160
 	}
 	if m.height == 0 {
-		m.height = 40
+		m.height = 42
 	}
 
-	header := m.renderHeader()
-	panels := m.panels()
-
-	body := m.renderBody(panels)
-	status := m.renderStatusBar()
-	return m.theme.Frame.Padding(1, 2).Render(strings.Join([]string{header, "", body, "", status}, "\n"))
-}
-
-func (m Model) panels() []string {
-	return []string{
-		m.renderPanel("overview", "Overview", m.renderOverview()),
-		m.renderPanel("velocity", "Commit Velocity", m.renderCommitVelocity()),
-		m.renderPanel("authors", "Author Activity", m.renderAuthors()),
-		m.renderPanel("files", "File Hotspots", m.renderFiles()),
-		m.renderPanel("branches", "Branch Health", m.renderBranches()),
-		m.renderPanel("prs", "PR Cycle", m.renderPRs()),
-	}
-}
-
-func (m Model) renderBody(panels []string) string {
+	innerWidth := max(78, m.width-2)
+	sections := []string{m.renderHeader(innerWidth)}
 	if m.compactMode() {
-		label := fmt.Sprintf("panel %d/%d", m.focused+1, len(panels))
-		return lipgloss.JoinVertical(
-			lipgloss.Left,
-			m.theme.Highlight.Render(label),
-			panels[m.focused],
-		)
+		sections = append(sections, m.renderCompact(innerWidth))
+	} else {
+		sections = append(sections, m.renderWide(innerWidth)...)
 	}
-	return m.renderGrid(panels)
+	sections = append(sections, m.renderFooter(innerWidth))
+
+	return m.theme.Frame.Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
 }
 
 func (m Model) compactMode() bool {
-	return m.width < 110 || m.height < 34
+	return m.width < 118 || m.height < 34
 }
 
 func (m Model) refreshCmd() tea.Cmd {
@@ -186,191 +162,296 @@ func (m Model) refreshCmd() tea.Cmd {
 	}
 }
 
-func (m Model) renderHeader() string {
-	repoName := m.snapshot.Repository.Path
-	if repoName == "" {
-		repoName = m.cfg.RepoPath
-	}
-	remoteName := "local-only"
-	if fullName := m.remote.FullName(); fullName != "" {
-		remoteName = string(m.remote.Provider) + " " + fullName
-	}
-
-	title := m.theme.Title.Render("git-pulse")
-	meta := m.theme.Subtle.Render(fmt.Sprintf("%s | window %s | %s", repoName, m.currentWindow(), remoteName))
-	if m.loading {
-		meta = m.theme.Highlight.Render(meta)
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, title, meta)
-}
-
-func (m Model) renderGrid(panels []string) string {
-	columns := 2
-	if m.width >= 180 {
-		columns = 3
-	}
-	panelWidth := (m.width - 8 - ((columns - 1) * 2)) / columns
-	if panelWidth < 42 {
-		columns = 1
-		panelWidth = m.width - 8
-	}
-
-	resized := make([]string, len(panels))
-	for idx, panel := range panels {
-		resized[idx] = lipgloss.NewStyle().Width(panelWidth).Render(panel)
-	}
-
-	var rows []string
-	for idx := 0; idx < len(resized); idx += columns {
-		end := idx + columns
-		if end > len(resized) {
-			end = len(resized)
-		}
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, resized[idx:end]...))
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, rows...)
-}
-
-func (m Model) renderPanel(key, title, body string) string {
-	style := m.theme.Panel.Width(48).Height(13)
-	if panelOrder[m.focused] == key {
-		style = style.BorderForeground(lipgloss.Color("#7dcfff"))
-	}
-	return style.Render(lipgloss.JoinVertical(lipgloss.Left, m.theme.Title.Render(title), body))
-}
-
-func (m Model) renderOverview() string {
-	breakdown := "no conventional commits"
-	if len(m.snapshot.Overview.ConventionalBreakdown) > 0 {
-		parts := make([]string, 0, len(m.snapshot.Overview.ConventionalBreakdown))
-		for _, entry := range m.snapshot.Overview.ConventionalBreakdown {
-			parts = append(parts, fmt.Sprintf("%s %d", entry.Name, entry.Value))
-		}
-		breakdown = strings.Join(parts, " | ")
-	}
-
-	lines := []string{
-		fmt.Sprintf("%s commits  %s authors", m.theme.Highlight.Render(fmt.Sprintf("%d", m.snapshot.Overview.CommitCount)), m.theme.Highlight.Render(fmt.Sprintf("%d", m.snapshot.Overview.AuthorCount))),
-		fmt.Sprintf("streak %d day  longest %d day", m.snapshot.Overview.CurrentStreak, m.snapshot.Overview.LongestStreak),
-		fmt.Sprintf("net lines %+d", m.snapshot.Overview.NetLines),
-		fmt.Sprintf("conventional %s", compactPercent(m.snapshot.Overview.ConventionalCommitShare)),
-		truncate(breakdown, 42),
-	}
-	return m.theme.Subtle.Render(strings.Join(lines, "\n"))
-}
-
-func (m Model) renderCommitVelocity() string {
-	dailyValues := make([]int, 0, len(m.snapshot.Commits.Daily))
-	for _, entry := range m.snapshot.Commits.Daily {
-		dailyValues = append(dailyValues, entry.Value)
-	}
-
-	weekdayLines := make([]string, 0, len(m.snapshot.Commits.Weekday))
-	maxWeekday := maxNamedValue(m.snapshot.Commits.Weekday)
-	for _, entry := range m.snapshot.Commits.Weekday {
-		weekdayLines = append(weekdayLines, fmt.Sprintf("%s %s %d", entry.Name, progressBar(entry.Value, maxWeekday, 10), entry.Value))
-	}
-
-	lines := []string{
-		fmt.Sprintf("90d spark %s", sparkline(dailyValues, 28)),
-		fmt.Sprintf("weekly buckets %s", sparkline(dateValuesToInts(m.snapshot.Commits.Weekly), 20)),
-		strings.Join(weekdayLines, "\n"),
-	}
-	return m.theme.Subtle.Render(strings.Join(lines, "\n"))
-}
-
-func (m Model) renderAuthors() string {
-	lines := []string{
-		fmt.Sprintf("active 7d %d  30d %d  bus factor %d", m.snapshot.Authors.ActiveThisWeek, m.snapshot.Authors.ActiveThisMonth, m.snapshot.Authors.BusFactor),
-		"leaders",
-	}
-
-	for _, entry := range m.snapshot.Authors.Leaderboard {
-		lines = append(lines, truncate(fmt.Sprintf("%-10s %2d commits %+d/-%d", entry.Name, entry.Commits, entry.Additions, entry.Deletions), 42))
-	}
-	if len(m.snapshot.Authors.NewContributors) > 0 {
-		lines = append(lines, "new")
-		for _, entry := range m.snapshot.Authors.NewContributors {
-			lines = append(lines, truncate(entry.Name, 42))
-		}
-	}
-	return m.theme.Subtle.Render(strings.Join(lines, "\n"))
-}
-
-func (m Model) renderFiles() string {
-	lines := []string{"hotspots"}
-	for _, file := range m.snapshot.Files.Hotspots {
-		lines = append(lines, truncate(fmt.Sprintf("%-18s %2d touches %+d/-%d", file.Path, file.Touches, file.Additions, file.Deletions), 42))
-	}
-	if len(m.snapshot.Files.Directories) > 0 {
-		lines = append(lines, "dirs")
-		for _, entry := range m.snapshot.Files.Directories {
-			lines = append(lines, truncate(fmt.Sprintf("%-12s churn %d  hits %d", entry.Path, entry.Churn, entry.Touches), 42))
-		}
-	}
-	return m.theme.Subtle.Render(strings.Join(lines, "\n"))
-}
-
-func (m Model) renderBranches() string {
-	lines := []string{
-		fmt.Sprintf("active %d  stale %d", len(m.snapshot.Branches.ActiveBranches), len(m.snapshot.Branches.StaleBranches)),
-		fmt.Sprintf("release cadence %s", compactDuration(time.Duration(m.snapshot.Branches.ReleaseCadenceDays*24)*time.Hour)),
-		fmt.Sprintf("last tag %s", fallback(m.snapshot.Branches.LastTag, "none")),
-		"branches",
-	}
-	for _, branch := range m.snapshot.Branches.ActiveBranches {
-		lines = append(lines, truncate(fmt.Sprintf("%-16s %2dd old", branch.Name, branch.AgeDays), 42))
-	}
-	for idx, branch := range m.snapshot.Branches.StaleBranches {
-		if idx >= 3 {
-			break
-		}
-		lines = append(lines, truncate(fmt.Sprintf("%-16s %2dd old", branch.Name, branch.AgeDays), 42))
-	}
-	return m.theme.Subtle.Render(strings.Join(lines, "\n"))
-}
-
-func (m Model) renderPRs() string {
-	if m.remote.Provider != remote.ProviderGitHub {
-		return m.theme.Subtle.Render("No GitHub remote detected.\nPR metrics appear automatically when `origin` points at GitHub.")
-	}
-	if m.prs.Repository == "" {
-		return m.theme.Subtle.Render("PR metrics unavailable.\nSet `GITHUB_TOKEN` for better rate limits and refresh with `r`.")
-	}
-
-	lines := []string{"medians"}
-	for _, window := range m.prs.Windows {
-		lines = append(lines, fmt.Sprintf("%s cycle %s  review %s  merged %d", window.Label, compactDuration(window.MedianCycleTime), compactDuration(window.MedianReviewTime), window.MergedCount))
-	}
-	lines = append(lines, fmt.Sprintf("throughput %s", sparkline(weeklyCountsToInts(m.prs.WeeklyThroughput), 18)))
-	if len(m.prs.OpenPullRequests) > 0 {
-		lines = append(lines, "open")
-		for idx, pr := range m.prs.OpenPullRequests {
-			if idx >= 3 {
-				break
-			}
-			lines = append(lines, truncate(fmt.Sprintf("#%d %s (%dd)", pr.Number, pr.Title, pr.AgeDays), 42))
-		}
-	}
-	return m.theme.Subtle.Render(strings.Join(lines, "\n"))
-}
-
-func (m Model) renderStatusBar() string {
-	keys := "tab focus  1-6 jump  t window  r refresh  q quit"
+func (m Model) renderHeader(width int) string {
+	repoName := m.repositoryName()
+	branch := fallback(m.snapshot.Repository.DefaultBranch, "HEAD")
 	if m.compactMode() {
-		keys = "tab/1-6 switch panel  t window  r refresh  q quit"
+		repoName = filepath.Base(repoName)
 	}
-	return m.theme.Panel.Border(lipgloss.HiddenBorder()).Padding(0, 1).Render(
-		lipgloss.JoinHorizontal(
+	left := fmt.Sprintf(" git-pulse  ·  %s  ·  %s  ·  %s ", repoName, branch, headerWindowLabel(m.currentWindow(), m.compactMode()))
+	right := fmt.Sprintf(" %s ", renderWindowTabs(m.currentWindow()))
+	line := joinEdge(left, right, width)
+	return lipgloss.NewStyle().
+		Width(width).
+		Bold(true).
+		Border(lipgloss.NormalBorder(), false, false, true, false).
+		Render(truncate(line, width))
+}
+
+func (m Model) renderWide(width int) []string {
+	left := (width - 1) / 2
+	right := width - left - 1
+
+	return []string{
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			m.renderSection("velocity", "COMMIT VELOCITY", m.renderVelocity(left-4, 12), left, 14),
+			m.renderSection("authors", "AUTHORS ACTIVE", m.renderAuthors(right-4, 12), right, 14),
+		),
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			m.renderSection("files", "FILE HOTSPOTS", m.renderFiles(left-4, 12), left, 14),
+			m.renderSection("prs", "PR CYCLE TIME", m.renderPRs(right-4, 12), right, 14),
+		),
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			m.renderSection("branches", "BRANCH HEALTH", m.renderBranches(left-4, 8), left, 10),
+			m.renderSection("churn", "CODE CHURN", m.renderChurn(right-4, 8), right, 10),
+		),
+	}
+}
+
+func (m Model) renderCompact(width int) string {
+	panelKey := panelOrder[m.focused]
+	var title string
+	var body string
+	switch panelKey {
+	case "velocity":
+		title = "COMMIT VELOCITY"
+		body = m.renderVelocity(width-6, 14)
+	case "authors":
+		title = "AUTHORS ACTIVE"
+		body = m.renderAuthors(width-6, 14)
+	case "files":
+		title = "FILE HOTSPOTS"
+		body = m.renderFiles(width-6, 14)
+	case "prs":
+		title = "PR CYCLE TIME"
+		body = m.renderPRs(width-6, 14)
+	case "branches":
+		title = "BRANCH HEALTH"
+		body = m.renderBranches(width-6, 14)
+	default:
+		title = "CODE CHURN"
+		body = m.renderChurn(width-6, 14)
+	}
+
+	label := fmt.Sprintf("panel %d/%d", m.focused+1, len(panelOrder))
+	return m.theme.PanelFocus.Width(width).Render(
+		lipgloss.JoinVertical(
 			lipgloss.Left,
-			m.theme.Highlight.Render(keys),
-			m.theme.Subtle.Render("  |  "),
-			m.theme.Subtle.Render(truncate(m.status, max(12, m.width-50))),
+			m.theme.Accent.Render(label),
+			m.theme.Accent.Render("▸ "+title),
+			fitLines(body, 15),
 		),
 	)
 }
 
-func (m Model) windows() []aggregator.TimeWindow {
+func (m Model) renderSection(key, title, body string, width, height int) string {
+	style := m.theme.Panel.Width(width).Height(height)
+	if panelOrder[m.focused] == key {
+		style = m.theme.PanelFocus.Width(width).Height(height)
+	}
+
+	titleLine := m.theme.Title.Render(title)
+	if panelOrder[m.focused] == key {
+		titleLine = m.theme.Accent.Render("▸ " + title)
+	}
+
+	return style.Render(
+		lipgloss.JoinVertical(
+			lipgloss.Left,
+			titleLine,
+			fitLines(body, height-2),
+		),
+	)
+}
+
+func (m Model) renderVelocity(width, height int) string {
+	values := dateValuesToInts(m.snapshot.Commits.Daily)
+	avg, peak := avgAndPeak(values, windowDays(m.currentWindow()))
+	trend := trendLabel(values)
+	spark := sparkline(values, max(18, width-4))
+	rangeLabel := dateRangeLabel(m.snapshot.Commits.Daily)
+	heatmap := renderWeekHeatmap(m.snapshot.Commits.Daily, 5)
+
+	lines := []string{
+		joinEdge(fmt.Sprintf("Commits/Day (%s)", windowLabel(m.currentWindow())), fmt.Sprintf("%s  avg %.1f  peak %d", trend, avg, peak), width),
+		"",
+		indent(spark, 1),
+		joinEdge("◂ "+rangeLabel[0], rangeLabel[1]+" ▸", width),
+		"",
+		"Day-of-Week Heatmap",
+		"     M  T  W  T  F  S  S",
+	}
+	lines = append(lines, heatmap...)
+	lines = append(lines, "", fmt.Sprintf("Streak: %d days", m.snapshot.Overview.CurrentStreak))
+	return strings.Join(trimLines(lines, height), "\n")
+}
+
+func (m Model) renderAuthors(width, height int) string {
+	thisWeek := m.snapshot.Authors.ActiveThisWeek
+	lastWeek := m.snapshot.Authors.ActiveLastWeek
+	maxActive := max(1, max(thisWeek, lastWeek))
+
+	lines := []string{
+		fmt.Sprintf("This Week  %s  %d authors", progressBar(thisWeek, maxActive, clamp(width-28, 8, 24)), thisWeek),
+		fmt.Sprintf("Last Week  %s  %d authors", progressBar(lastWeek, maxActive, clamp(width-28, 8, 24)), lastWeek),
+		"",
+		"LEADERBOARD",
+	}
+
+	barWidth := clamp(width-24, 8, 22)
+	maxCommits := 1
+	for _, author := range m.snapshot.Authors.Leaderboard {
+		if author.Commits > maxCommits {
+			maxCommits = author.Commits
+		}
+	}
+	for idx, author := range m.snapshot.Authors.Leaderboard {
+		if idx >= 7 {
+			break
+		}
+		name := truncate(author.Name, 12)
+		lines = append(lines, fmt.Sprintf("%d. %-12s %s %3d", idx+1, name, progressBar(author.Commits, maxCommits, barWidth), author.Commits))
+	}
+
+	risk := "healthy"
+	switch {
+	case m.snapshot.Authors.BusFactor <= 2:
+		risk = "fragile"
+	case m.snapshot.Authors.BusFactor <= 4:
+		risk = "moderate"
+	}
+	lines = append(lines, "", fmt.Sprintf("Bus Factor  %s  %d  %s", progressBar(m.snapshot.Authors.BusFactor, max(6, m.snapshot.Authors.BusFactor), 10), m.snapshot.Authors.BusFactor, risk))
+	return strings.Join(trimLines(lines, height), "\n")
+}
+
+func (m Model) renderFiles(width, height int) string {
+	lines := []string{"Most Changed Files            hits  churn"}
+	maxTouches := 1
+	for _, file := range m.snapshot.Files.Hotspots {
+		if file.Touches > maxTouches {
+			maxTouches = file.Touches
+		}
+	}
+	barWidth := clamp(width-28, 6, 18)
+	for idx, file := range m.snapshot.Files.Hotspots {
+		if idx >= 7 {
+			break
+		}
+		churn := file.Additions + file.Deletions
+		lines = append(lines, fmt.Sprintf("%-24s %s %3d %+5d", truncate(file.Path, 24), progressBar(file.Touches, maxTouches, barWidth), file.Touches, churn))
+	}
+
+	lines = append(lines, "", "Hot Directories")
+	maxDir := 1
+	for _, dir := range m.snapshot.Files.Directories {
+		if dir.Churn > maxDir {
+			maxDir = dir.Churn
+		}
+	}
+	for idx, dir := range m.snapshot.Files.Directories {
+		if idx >= 3 {
+			break
+		}
+		lines = append(lines, fmt.Sprintf("%-16s %s %4d", truncate(dir.Path, 16), progressBar(dir.Churn, maxDir, clamp(width-25, 6, 16)), dir.Churn))
+	}
+	return strings.Join(trimLines(lines, height), "\n")
+}
+
+func (m Model) renderPRs(width, height int) string {
+	if m.remote.Provider != remote.ProviderGitHub {
+		return fitLines("No GitHub remote detected.\nPR metrics appear automatically when `origin` points at GitHub.", height)
+	}
+	if m.prs.Repository == "" {
+		return fitLines("PR metrics unavailable.\nLocal analytics are loaded; remote data did not arrive in time.", height)
+	}
+
+	lines := []string{"Median Time to Merge"}
+	for _, window := range m.prs.Windows {
+		lines = append(lines, fmt.Sprintf("%-4s %8s  review %-5s  merged %2d", window.Label, compactDuration(window.MedianCycleTime), compactDuration(window.MedianReviewTime), window.MergedCount))
+	}
+
+	cycleValues := weeklyCycleToHours(m.prs.WeeklyCycle)
+	lines = append(lines, "", "Cycle Trend  "+sparkline(cycleValues, clamp(width-14, 10, 30)))
+	lines = append(lines, "Throughput   "+sparkline(weeklyCountsToInts(m.prs.WeeklyThroughput), clamp(width-14, 10, 30)))
+
+	stale := 0
+	for _, pr := range m.prs.OpenPullRequests {
+		if pr.AgeDays > 14 {
+			stale++
+		}
+	}
+	lines = append(lines, fmt.Sprintf("Open PRs     %2d  (%d stale)", len(m.prs.OpenPullRequests), stale))
+	for idx, pr := range m.prs.OpenPullRequests {
+		if idx >= 2 {
+			break
+		}
+		lines = append(lines, fmt.Sprintf("#%-5d %s", pr.Number, truncate(pr.Title, width-8)))
+	}
+	return strings.Join(trimLines(lines, height), "\n")
+}
+
+func (m Model) renderBranches(width, height int) string {
+	lines := []string{
+		fmt.Sprintf("Active: %d   Stale: %d   Last tag: %s", len(m.snapshot.Branches.ActiveBranches), len(m.snapshot.Branches.StaleBranches), fallback(m.snapshot.Branches.LastTag, "none")),
+		fmt.Sprintf("Release cadence: %s", compactDuration(time.Duration(m.snapshot.Branches.ReleaseCadenceDays*24)*time.Hour)),
+		"",
+	}
+
+	for idx, branch := range m.snapshot.Branches.ActiveBranches {
+		if idx >= 4 {
+			break
+		}
+		lines = append(lines, fmt.Sprintf("%-20s %3dd old", truncate(branch.Name, 20), branch.AgeDays))
+	}
+	for idx, branch := range m.snapshot.Branches.StaleBranches {
+		if idx >= 2 {
+			break
+		}
+		lines = append(lines, fmt.Sprintf("%-20s %3dd old", truncate(branch.Name, 20), branch.AgeDays))
+	}
+	return strings.Join(trimLines(lines, height), "\n")
+}
+
+func (m Model) renderChurn(width, height int) string {
+	adds := m.snapshot.Overview.Additions
+	dels := m.snapshot.Overview.Deletions
+	totalChange := adds + dels
+	addBar := progressBar(adds, max(1, totalChange), clamp(width-18, 8, 24))
+	delBar := progressBar(dels, max(1, totalChange), clamp(width-18, 8, 24))
+
+	lines := []string{
+		fmt.Sprintf("Net LOC (%s)   %+d", windowLabel(m.currentWindow()), m.snapshot.Overview.NetLines),
+		fmt.Sprintf("Adds  %s  %d", addBar, adds),
+		fmt.Sprintf("Dels  %s  %d", delBar, dels),
+		fmt.Sprintf("Change volume  %d lines", totalChange),
+		fmt.Sprintf("Commit quality %s", compactPercent(m.snapshot.Overview.ConventionalCommitShare)),
+		"",
+		"Commit Types",
+		renderBreakdownLine(m.snapshot.Overview.ConventionalBreakdown, width),
+		"Commit Rhythm",
+		sparkline(namedValuesToInts(m.snapshot.Commits.Hourly), clamp(width-2, 12, 32)),
+	}
+	return strings.Join(trimLines(lines, height), "\n")
+}
+
+func (m Model) renderFooter(width int) string {
+	keys := " tab panel focus   1-6 jump   t time range   r refresh   q quit "
+	if m.compactMode() {
+		keys = " tab/1-6 switch panel   t time range   r refresh   q quit "
+	}
+
+	return lipgloss.NewStyle().
+		Width(width).
+		Border(lipgloss.NormalBorder(), true, false, false, false).
+		Render(joinEdge(keys, truncate(m.status, clamp(width/2, 18, width-6)), width))
+}
+
+func (m Model) repositoryName() string {
+	if fullName := m.remote.FullName(); fullName != "" {
+		return fullName
+	}
+	repoPath := m.snapshot.Repository.Path
+	if repoPath == "" {
+		repoPath = m.cfg.RepoPath
+	}
+	base := filepath.Base(repoPath)
+	if base == "." || base == "" {
+		return repoPath
+	}
+	return base
+}
+
+func windowOptions() []aggregator.TimeWindow {
 	return []aggregator.TimeWindow{
 		aggregator.Window7Days,
 		aggregator.Window30Days,
@@ -381,7 +462,259 @@ func (m Model) windows() []aggregator.TimeWindow {
 }
 
 func (m Model) currentWindow() aggregator.TimeWindow {
-	return m.windows()[m.windowIndex]
+	return windowOptions()[m.windowIndex]
+}
+
+func windowLabel(window aggregator.TimeWindow) string {
+	switch window {
+	case aggregator.Window7Days:
+		return "Last 7 days"
+	case aggregator.Window30Days:
+		return "Last 30 days"
+	case aggregator.Window90Days:
+		return "Last 90 days"
+	case aggregator.Window1Year:
+		return "Last year"
+	default:
+		return "All time"
+	}
+}
+
+func headerWindowLabel(window aggregator.TimeWindow, compact bool) string {
+	if !compact {
+		return windowLabel(window)
+	}
+	switch window {
+	case aggregator.Window7Days:
+		return "7d"
+	case aggregator.Window30Days:
+		return "30d"
+	case aggregator.Window90Days:
+		return "90d"
+	case aggregator.Window1Year:
+		return "1y"
+	default:
+		return "all"
+	}
+}
+
+func windowDays(window aggregator.TimeWindow) int {
+	switch window {
+	case aggregator.Window7Days:
+		return 7
+	case aggregator.Window30Days:
+		return 30
+	case aggregator.Window90Days:
+		return 90
+	case aggregator.Window1Year:
+		return 365
+	default:
+		return 0
+	}
+}
+
+func renderWindowTabs(current aggregator.TimeWindow) string {
+	parts := make([]string, 0, len(windowOptions()))
+	for _, window := range windowOptions() {
+		label := string(window)
+		if window == current {
+			parts = append(parts, "["+label+"]")
+		} else {
+			parts = append(parts, label)
+		}
+	}
+	return strings.Join(parts, "  ")
+}
+
+func renderWeekHeatmap(values []aggregator.DateValue, rows int) []string {
+	counts := map[string]int{}
+	maxValue := 0
+	var latest time.Time
+	for _, entry := range values {
+		key := entry.Date.Format("2006-01-02")
+		counts[key] = entry.Value
+		if entry.Value > maxValue {
+			maxValue = entry.Value
+		}
+		if entry.Date.After(latest) {
+			latest = entry.Date
+		}
+	}
+	if latest.IsZero() {
+		latest = time.Now().UTC()
+	}
+
+	start := startOfWeek(latest).AddDate(0, 0, -7*(rows-1))
+	lines := make([]string, 0, rows)
+	for row := 0; row < rows; row++ {
+		week := start.AddDate(0, 0, row*7)
+		label := fmt.Sprintf("W-%d", rows-row-1)
+		if row == rows-1 {
+			label = "Now"
+		}
+
+		cells := make([]string, 0, 7)
+		for day := 0; day < 7; day++ {
+			date := week.AddDate(0, 0, day)
+			value := counts[date.Format("2006-01-02")]
+			cells = append(cells, heatLevel(value, maxValue))
+		}
+		lines = append(lines, fmt.Sprintf("%-3s  %s", label, strings.Join(cells, "  ")))
+	}
+	return lines
+}
+
+func startOfWeek(ts time.Time) time.Time {
+	offset := int(ts.Weekday()) - 1
+	if ts.Weekday() == time.Sunday {
+		offset = 6
+	}
+	return time.Date(ts.Year(), ts.Month(), ts.Day(), 0, 0, 0, 0, ts.Location()).AddDate(0, 0, -offset)
+}
+
+func heatLevel(value, maxValue int) string {
+	levels := []string{"·", "▁", "▃", "▅", "▇", "█"}
+	if value <= 0 || maxValue <= 0 {
+		return levels[0]
+	}
+	idx := int(math.Round(float64(value) / float64(maxValue) * float64(len(levels)-1)))
+	if idx < 1 {
+		idx = 1
+	}
+	if idx >= len(levels) {
+		idx = len(levels) - 1
+	}
+	return levels[idx]
+}
+
+func avgAndPeak(values []int, days int) (float64, int) {
+	if days <= 0 {
+		days = len(values)
+	}
+	if days <= 0 {
+		return 0, 0
+	}
+	sum := 0
+	peak := 0
+	for _, value := range values {
+		sum += value
+		if value > peak {
+			peak = value
+		}
+	}
+	return float64(sum) / float64(days), peak
+}
+
+func trendLabel(values []int) string {
+	if len(values) < 2 {
+		return "→ flat"
+	}
+	half := len(values) / 2
+	if half == 0 {
+		half = 1
+	}
+	prev := sumInts(values[:half])
+	next := sumInts(values[half:])
+	if prev == 0 {
+		if next == 0 {
+			return "→ flat"
+		}
+		return "↗ new"
+	}
+	change := int(math.Round((float64(next-prev) / float64(prev)) * 100))
+	switch {
+	case change > 0:
+		return fmt.Sprintf("↗ +%d%%", change)
+	case change < 0:
+		return fmt.Sprintf("↘ %d%%", change)
+	default:
+		return "→ 0%"
+	}
+}
+
+func dateRangeLabel(values []aggregator.DateValue) [2]string {
+	if len(values) == 0 {
+		return [2]string{"no history", "today"}
+	}
+	return [2]string{values[0].Date.Format("Jan 02"), values[len(values)-1].Date.Format("Jan 02")}
+}
+
+func renderBreakdownLine(values []aggregator.NamedValue, width int) string {
+	if len(values) == 0 {
+		return "no conventional breakdown"
+	}
+	parts := make([]string, 0, len(values))
+	maxValue := maxNamedValue(values)
+	barWidth := clamp(width/8, 2, 8)
+	for _, value := range values {
+		parts = append(parts, fmt.Sprintf("%s %s", value.Name, progressBar(value.Value, maxValue, barWidth)))
+	}
+	return truncate(strings.Join(parts, "  "), width)
+}
+
+func weeklyCycleToHours(values []remote.WeeklyCycle) []int {
+	out := make([]int, 0, len(values))
+	for _, value := range values {
+		out = append(out, int(math.Round(value.Median.Hours())))
+	}
+	return out
+}
+
+func namedValuesToInts(values []aggregator.NamedValue) []int {
+	out := make([]int, 0, len(values))
+	for _, value := range values {
+		out = append(out, value.Value)
+	}
+	return out
+}
+
+func sumInts(values []int) int {
+	sum := 0
+	for _, value := range values {
+		sum += value
+	}
+	return sum
+}
+
+func trimLines(lines []string, height int) []string {
+	if len(lines) > height {
+		return lines[:height]
+	}
+	return lines
+}
+
+func fitLines(text string, height int) string {
+	lines := strings.Split(text, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func joinEdge(left, right string, width int) string {
+	leftWidth := lipgloss.Width(left)
+	rightWidth := lipgloss.Width(right)
+	if leftWidth+rightWidth >= width {
+		return truncate(left+" "+right, width)
+	}
+	return left + strings.Repeat(" ", width-leftWidth-rightWidth) + right
+}
+
+func indent(value string, amount int) string {
+	return strings.Repeat(" ", amount) + value
+}
+
+func clamp(value, minimum, maximum int) int {
+	if value < minimum {
+		return minimum
+	}
+	if value > maximum {
+		return maximum
+	}
+	return value
 }
 
 func dateValuesToInts(values []aggregator.DateValue) []int {

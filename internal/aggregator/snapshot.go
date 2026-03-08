@@ -43,6 +43,8 @@ type RepositorySummary struct {
 type Overview struct {
 	CommitCount             int
 	AuthorCount             int
+	Additions               int
+	Deletions               int
 	NetLines                int
 	CurrentStreak           int
 	LongestStreak           int
@@ -59,6 +61,7 @@ type CommitActivity struct {
 
 type AuthorActivity struct {
 	ActiveThisWeek  int
+	ActiveLastWeek  int
 	ActiveThisMonth int
 	NewContributors []AuthorSummary
 	Leaderboard     []AuthorSummary
@@ -125,6 +128,7 @@ func Aggregate(data git.RepositoryData, opts Options) Snapshot {
 
 	filtered := filterCommits(data.Commits, now, opts.Window)
 	weekCommits := filterCommits(data.Commits, now, Window7Days)
+	lastWeekCommits := filterCommitsRange(data.Commits, now.AddDate(0, 0, -14), now.AddDate(0, 0, -7))
 	monthCommits := filterCommits(data.Commits, now, Window30Days)
 
 	return Snapshot{
@@ -137,7 +141,7 @@ func Aggregate(data git.RepositoryData, opts Options) Snapshot {
 		},
 		Overview: buildOverview(filtered),
 		Commits:  buildCommitActivity(filtered),
-		Authors:  buildAuthorActivity(data.Commits, filtered, weekCommits, monthCommits, now),
+		Authors:  buildAuthorActivity(data.Commits, filtered, weekCommits, lastWeekCommits, monthCommits, now),
 		Files:    buildFileActivity(filtered),
 		Branches: buildBranchActivity(data, now),
 	}
@@ -184,12 +188,16 @@ func buildOverview(commits []git.CommitRecord) Overview {
 	days := map[string]int{}
 	breakdown := map[string]int{}
 	netLines := 0
+	additions := 0
+	deletions := 0
 	conventional := 0
 
 	for _, commit := range commits {
 		authors[commit.AuthorEmail] = struct{}{}
 		day := commit.When.Format("2006-01-02")
 		days[day]++
+		additions += commit.Additions
+		deletions += commit.Deletions
 		netLines += commit.Additions - commit.Deletions
 		if commit.ConventionalType != "" {
 			conventional++
@@ -211,12 +219,28 @@ func buildOverview(commits []git.CommitRecord) Overview {
 	return Overview{
 		CommitCount:             len(commits),
 		AuthorCount:             len(authors),
+		Additions:               additions,
+		Deletions:               deletions,
 		NetLines:                netLines,
 		CurrentStreak:           currentStreak(days),
 		LongestStreak:           longestStreak(days),
 		ConventionalCommitShare: percentage(conventional, len(commits)),
 		ConventionalBreakdown:   breakdownList,
 	}
+}
+
+func filterCommitsRange(commits []git.CommitRecord, startInclusive, endExclusive time.Time) []git.CommitRecord {
+	filtered := make([]git.CommitRecord, 0, len(commits))
+	for _, commit := range commits {
+		if commit.When.Before(startInclusive) {
+			continue
+		}
+		if !endExclusive.IsZero() && !commit.When.Before(endExclusive) {
+			continue
+		}
+		filtered = append(filtered, commit)
+	}
+	return filtered
 }
 
 func currentStreak(days map[string]int) int {
@@ -303,11 +327,12 @@ func buildCommitActivity(commits []git.CommitRecord) CommitActivity {
 	}
 }
 
-func buildAuthorActivity(allCommits, commits, weekCommits, monthCommits []git.CommitRecord, now time.Time) AuthorActivity {
+func buildAuthorActivity(allCommits, commits, weekCommits, lastWeekCommits, monthCommits []git.CommitRecord, now time.Time) AuthorActivity {
 	leaderboardMap := map[string]*AuthorSummary{}
 	firstSeen := map[string]time.Time{}
 	seenBeforeWindow := map[string]bool{}
 	weekAuthors := map[string]struct{}{}
+	lastWeekAuthors := map[string]struct{}{}
 	monthAuthors := map[string]struct{}{}
 
 	windowStart := time.Time{}
@@ -353,6 +378,9 @@ func buildAuthorActivity(allCommits, commits, weekCommits, monthCommits []git.Co
 	for _, commit := range monthCommits {
 		monthAuthors[commit.AuthorEmail] = struct{}{}
 	}
+	for _, commit := range lastWeekCommits {
+		lastWeekAuthors[commit.AuthorEmail] = struct{}{}
+	}
 
 	var leaderboard []AuthorSummary
 	var newContributors []AuthorSummary
@@ -381,6 +409,7 @@ func buildAuthorActivity(allCommits, commits, weekCommits, monthCommits []git.Co
 
 	return AuthorActivity{
 		ActiveThisWeek:  len(weekAuthors),
+		ActiveLastWeek:  len(lastWeekAuthors),
 		ActiveThisMonth: len(monthAuthors),
 		NewContributors: newContributors,
 		Leaderboard:     leaderboard,

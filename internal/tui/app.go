@@ -45,6 +45,12 @@ type Model struct {
 	loader      dashboard.Loader
 }
 
+type panelPalette struct {
+	Border lipgloss.Style
+	Title  lipgloss.Style
+	Bar    lipgloss.Style
+}
+
 func NewModel(cfg config.Config) (Model, error) {
 	theme, err := ResolveTheme(cfg.Theme)
 	if err != nil {
@@ -133,7 +139,7 @@ func (m Model) View() string {
 	}
 	sections = append(sections, m.renderFooter(innerWidth))
 
-	return m.theme.Frame.Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
+	return m.theme.Frame.Width(innerWidth + 2).Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
 }
 
 func (m Model) compactMode() bool {
@@ -168,13 +174,13 @@ func (m Model) renderHeader(width int) string {
 	if m.compactMode() {
 		repoName = filepath.Base(repoName)
 	}
-	left := fmt.Sprintf(" git-pulse  ·  %s  ·  %s  ·  %s ", repoName, branch, headerWindowLabel(m.currentWindow(), m.compactMode()))
-	right := fmt.Sprintf(" %s ", renderWindowTabs(m.currentWindow()))
+	left := m.theme.Header.Render("git-pulse") + m.theme.Muted.Render("  •  ") + m.theme.Strong.Render(repoName) + m.theme.Muted.Render("  •  ") + branch + m.theme.Muted.Render("  •  ") + headerWindowLabel(m.currentWindow(), m.compactMode())
+	right := renderWindowTabs(m.currentWindow(), m.theme)
 	line := joinEdge(left, right, width)
 	return lipgloss.NewStyle().
 		Width(width).
-		Bold(true).
 		Border(lipgloss.NormalBorder(), false, false, true, false).
+		BorderForeground(lipgloss.AdaptiveColor{Light: "8", Dark: "8"}).
 		Render(truncate(line, width))
 }
 
@@ -235,23 +241,7 @@ func (m Model) renderCompact(width int) string {
 }
 
 func (m Model) renderSection(key, title, body string, width, height int) string {
-	style := m.theme.Panel.Width(width).Height(height)
-	if panelOrder[m.focused] == key {
-		style = m.theme.PanelFocus.Width(width).Height(height)
-	}
-
-	titleLine := m.theme.Title.Render(title)
-	if panelOrder[m.focused] == key {
-		titleLine = m.theme.Accent.Render("▸ " + title)
-	}
-
-	return style.Render(
-		lipgloss.JoinVertical(
-			lipgloss.Left,
-			titleLine,
-			fitLines(body, height-2),
-		),
-	)
+	return renderFramedSection(width, height, title, body, m.paletteFor(key), panelOrder[m.focused] == key)
 }
 
 func (m Model) renderVelocity(width, height int) string {
@@ -262,18 +252,19 @@ func (m Model) renderVelocity(width, height int) string {
 	spark := sparkline(values, max(18, width-4))
 	rangeLabel := dateRangeLabel(m.snapshot.Commits.Daily)
 	heatmap := renderWeekHeatmap(m.snapshot.Commits.Daily, 5)
+	hourly := sparkline(namedValuesToInts(m.snapshot.Commits.Hourly), clamp(width-10, 8, 24))
 
 	lines := []string{
 		joinEdge(fmt.Sprintf("Commits/Day (%s)", windowLabel(m.currentWindow())), fmt.Sprintf("%s  avg %.1f  peak %d", trend, avg, peak), width),
 		"",
-		indent(spark, 1),
+		m.paletteFor("velocity").Bar.Render(indent(spark, 1)),
 		joinEdge("◂ "+rangeLabel[0], rangeLabel[1]+" ▸", width),
 		"",
 		"Day-of-Week Heatmap",
 		"     M  T  W  T  F  S  S",
 	}
 	lines = append(lines, heatmap...)
-	lines = append(lines, "", fmt.Sprintf("Streak: %s", m.theme.Positive.Render(fmt.Sprintf("%d days", m.snapshot.Overview.CurrentStreak))))
+	lines = append(lines, "", "Hour-of-Day "+m.theme.Muted.Render(hourly), fmt.Sprintf("Streak: %s", m.theme.Positive.Render(fmt.Sprintf("%d days", m.snapshot.Overview.CurrentStreak))))
 	return strings.Join(trimLines(lines, height), "\n")
 }
 
@@ -283,8 +274,8 @@ func (m Model) renderAuthors(width, height int) string {
 	maxActive := max(1, max(thisWeek, lastWeek))
 
 	lines := []string{
-		fmt.Sprintf("This Week  %s  %s", progressBar(thisWeek, maxActive, clamp(width-28, 8, 24)), m.theme.Positive.Render(fmt.Sprintf("%d authors", thisWeek))),
-		fmt.Sprintf("Last Week  %s  %s", progressBar(lastWeek, maxActive, clamp(width-28, 8, 24)), m.theme.Muted.Render(fmt.Sprintf("%d authors", lastWeek))),
+		fmt.Sprintf("This Week  %s  %s", meterBar(thisWeek, maxActive, clamp(width-28, 8, 24), m.paletteFor("authors").Bar, m.theme.Muted), m.theme.Positive.Render(fmt.Sprintf("%d authors", thisWeek))),
+		fmt.Sprintf("Last Week  %s  %s", meterBar(lastWeek, maxActive, clamp(width-28, 8, 24), m.paletteFor("authors").Bar.Copy().Faint(true), m.theme.Muted), m.theme.Muted.Render(fmt.Sprintf("%d authors", lastWeek))),
 		"",
 		"LEADERBOARD",
 	}
@@ -301,7 +292,7 @@ func (m Model) renderAuthors(width, height int) string {
 			break
 		}
 		name := truncate(author.Name, 12)
-		lines = append(lines, fmt.Sprintf("%d. %-12s %s %3d", idx+1, name, progressBar(author.Commits, maxCommits, barWidth), author.Commits))
+		lines = append(lines, fmt.Sprintf("%d. %-12s %s %3d", idx+1, name, meterBar(author.Commits, maxCommits, barWidth, m.paletteFor("authors").Bar, m.theme.Muted), author.Commits))
 	}
 
 	risk := "healthy"
@@ -332,7 +323,7 @@ func (m Model) renderFiles(width, height int) string {
 			break
 		}
 		churn := file.Additions + file.Deletions
-		lines = append(lines, fmt.Sprintf("%-24s %s %3d %s", truncate(file.Path, 24), progressBar(file.Touches, maxTouches, barWidth), file.Touches, m.theme.Warning.Render(fmt.Sprintf("+%d", churn))))
+		lines = append(lines, fmt.Sprintf("%-24s %s %3d %s", truncate(file.Path, 24), meterBar(file.Touches, maxTouches, barWidth, m.paletteFor("files").Bar, m.theme.Muted), file.Touches, m.theme.Warning.Render(fmt.Sprintf("+%d", churn))))
 	}
 
 	lines = append(lines, "", "Hot Directories")
@@ -346,7 +337,7 @@ func (m Model) renderFiles(width, height int) string {
 		if idx >= 3 {
 			break
 		}
-		lines = append(lines, fmt.Sprintf("%-16s %s %4d", truncate(dir.Path, 16), progressBar(dir.Churn, maxDir, clamp(width-25, 6, 16)), dir.Churn))
+		lines = append(lines, fmt.Sprintf("%-16s %s %4d", truncate(dir.Path, 16), meterBar(dir.Churn, maxDir, clamp(width-25, 6, 16), m.paletteFor("files").Bar, m.theme.Muted), dir.Churn))
 	}
 	return strings.Join(trimLines(lines, height), "\n")
 }
@@ -365,8 +356,8 @@ func (m Model) renderPRs(width, height int) string {
 	}
 
 	cycleValues := weeklyCycleToHours(m.prs.WeeklyCycle)
-	lines = append(lines, "", "Cycle Trend  "+sparkline(cycleValues, clamp(width-14, 10, 30)))
-	lines = append(lines, "Throughput   "+sparkline(weeklyCountsToInts(m.prs.WeeklyThroughput), clamp(width-14, 10, 30)))
+	lines = append(lines, "", "Cycle Trend  "+m.paletteFor("prs").Bar.Render(sparkline(cycleValues, clamp(width-14, 10, 30))))
+	lines = append(lines, "Throughput   "+m.paletteFor("prs").Bar.Render(sparkline(weeklyCountsToInts(m.prs.WeeklyThroughput), clamp(width-14, 10, 30))))
 
 	stale := 0
 	for _, pr := range m.prs.OpenPullRequests {
@@ -414,13 +405,11 @@ func (m Model) renderChurn(width, height int) string {
 	adds := m.snapshot.Overview.Additions
 	dels := m.snapshot.Overview.Deletions
 	totalChange := adds + dels
-	addBar := progressBar(adds, max(1, totalChange), clamp(width-18, 8, 24))
-	delBar := progressBar(dels, max(1, totalChange), clamp(width-18, 8, 24))
 
 	lines := []string{
 		fmt.Sprintf("Net LOC (%s)   %s", windowLabel(m.currentWindow()), m.theme.Positive.Render(fmt.Sprintf("%+d", m.snapshot.Overview.NetLines))),
-		fmt.Sprintf("Adds  %s  %s", addBar, m.theme.Positive.Render(fmt.Sprintf("%d", adds))),
-		fmt.Sprintf("Dels  %s  %s", delBar, m.theme.Danger.Render(fmt.Sprintf("%d", dels))),
+		fmt.Sprintf("Adds  %s  %s", meterBar(adds, max(1, totalChange), clamp(width-18, 8, 24), m.theme.Positive, m.theme.Muted), m.theme.Positive.Render(fmt.Sprintf("%d", adds))),
+		fmt.Sprintf("Dels  %s  %s", meterBar(dels, max(1, totalChange), clamp(width-18, 8, 24), m.theme.Danger, m.theme.Muted), m.theme.Danger.Render(fmt.Sprintf("%d", dels))),
 		fmt.Sprintf("Change volume  %d lines", totalChange),
 		fmt.Sprintf("Commit quality %s", m.colorizePercent(m.snapshot.Overview.ConventionalCommitShare)),
 		"",
@@ -433,14 +422,15 @@ func (m Model) renderChurn(width, height int) string {
 }
 
 func (m Model) renderFooter(width int) string {
-	keys := " tab panel focus   1-6 jump   t time range   r refresh   q quit "
+	keys := m.theme.Accent.Render("tab") + " panel focus   " + m.theme.Accent.Render("1-6") + " jump   " + m.theme.Accent.Render("t") + " time range   " + m.theme.Accent.Render("r") + " refresh   " + m.theme.Accent.Render("q") + " quit "
 	if m.compactMode() {
-		keys = " tab/1-6 switch panel   t time range   r refresh   q quit "
+		keys = m.theme.Accent.Render("tab/1-6") + " switch panel   " + m.theme.Accent.Render("t") + " time range   " + m.theme.Accent.Render("r") + " refresh   " + m.theme.Accent.Render("q") + " quit "
 	}
 
 	return lipgloss.NewStyle().
 		Width(width).
 		Border(lipgloss.NormalBorder(), true, false, false, false).
+		BorderForeground(lipgloss.AdaptiveColor{Light: "8", Dark: "8"}).
 		Render(joinEdge(keys, truncate(m.status, clamp(width/2, 18, width-6)), width))
 }
 
@@ -521,14 +511,14 @@ func windowDays(window aggregator.TimeWindow) int {
 	}
 }
 
-func renderWindowTabs(current aggregator.TimeWindow) string {
+func renderWindowTabs(current aggregator.TimeWindow, theme Theme) string {
 	parts := make([]string, 0, len(windowOptions()))
 	for _, window := range windowOptions() {
 		label := string(window)
 		if window == current {
-			parts = append(parts, "["+label+"]")
+			parts = append(parts, theme.Accent.Render("["+label+"]"))
 		} else {
-			parts = append(parts, label)
+			parts = append(parts, theme.Muted.Render(label))
 		}
 	}
 	return strings.Join(parts, "  ")
@@ -683,6 +673,37 @@ func renderBreakdownLine(values []aggregator.NamedValue, width int) string {
 	return truncate(strings.Join(parts, "  "), width)
 }
 
+func renderFramedSection(width, height int, title, body string, palette panelPalette, focused bool) string {
+	contentHeight := max(1, height-2)
+	lines := strings.Split(fitLines(body, contentHeight), "\n")
+
+	rawTitle := " " + title + " "
+	if focused {
+		rawTitle = "▸ " + title + " "
+	}
+	titleRendered := palette.Title.Render(rawTitle)
+	topPad := max(0, width-2-lipgloss.Width(titleRendered))
+	top := palette.Border.Render("┌") + titleRendered + palette.Border.Render(strings.Repeat("─", topPad)+"┐")
+
+	leftBorder := palette.Border.Render("│")
+	rightBorder := palette.Border.Render("│")
+	out := []string{top}
+	for _, line := range lines {
+		padded := padRight(truncate(line, width-2), width-2)
+		out = append(out, leftBorder+padded+rightBorder)
+	}
+	out = append(out, palette.Border.Render("└"+strings.Repeat("─", width-2)+"┘"))
+	return strings.Join(out, "\n")
+}
+
+func padRight(value string, width int) string {
+	current := lipgloss.Width(value)
+	if current >= width {
+		return value
+	}
+	return value + strings.Repeat(" ", width-current)
+}
+
 func weeklyCycleToHours(values []remote.WeeklyCycle) []int {
 	out := make([]int, 0, len(values))
 	for _, value := range values {
@@ -746,6 +767,47 @@ func clamp(value, minimum, maximum int) int {
 		return maximum
 	}
 	return value
+}
+
+func (m Model) paletteFor(key string) panelPalette {
+	switch key {
+	case "velocity":
+		return panelPalette{
+			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "2", Dark: "2"}),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "2", Dark: "2"}).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "2", Dark: "2"}),
+		}
+	case "authors":
+		return panelPalette{
+			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "6", Dark: "6"}),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "6", Dark: "6"}).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "6", Dark: "6"}),
+		}
+	case "files":
+		return panelPalette{
+			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "3", Dark: "3"}),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "3", Dark: "3"}).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "3", Dark: "3"}),
+		}
+	case "prs":
+		return panelPalette{
+			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "5", Dark: "5"}),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "5", Dark: "5"}).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "5", Dark: "5"}),
+		}
+	case "branches":
+		return panelPalette{
+			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "4", Dark: "4"}),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "4", Dark: "4"}).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "4", Dark: "4"}),
+		}
+	default:
+		return panelPalette{
+			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "1", Dark: "1"}),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "1", Dark: "1"}).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "1", Dark: "1"}),
+		}
+	}
 }
 
 func dateValuesToInts(values []aggregator.DateValue) []int {

@@ -5,6 +5,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 var sparklineBlocks = []rune("▁▂▃▄▅▆▇█")
@@ -55,6 +57,25 @@ func progressBar(value, total, width int) string {
 		filled = 0
 	}
 	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+}
+
+func meterBar(value, total, width int, fill, empty lipgloss.Style) string {
+	if width <= 0 {
+		return ""
+	}
+	if total <= 0 {
+		return empty.Render(strings.Repeat("░", width))
+	}
+
+	filled := int(math.Round(float64(value) / float64(total) * float64(width)))
+	if filled > width {
+		filled = width
+	}
+	if filled < 0 {
+		filled = 0
+	}
+
+	return fill.Render(strings.Repeat("█", filled)) + empty.Render(strings.Repeat("░", width-filled))
 }
 
 func sampleInts(values []int, width int) []int {

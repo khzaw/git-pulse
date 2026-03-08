@@ -215,18 +215,18 @@ func (m Model) refreshRemoteCmd() tea.Cmd {
 func (m Model) renderHeader(width int) string {
 	repoName := m.repositoryName()
 	branch := fallback(m.snapshot.Repository.DefaultBranch, "HEAD")
-	left := m.theme.Header.Render("git-pulse") + m.theme.Muted.Render("  •  ") + m.theme.Strong.Render(repoName) + m.theme.Muted.Render("  •  ") + branch
+	left := m.theme.Header.Render("git-pulse") + " " + m.theme.HeaderMeta.Render(repoName) + m.theme.Muted.Render("  •  ") + m.theme.Strong.Render(branch)
 	if m.compactMode() {
 		repoName = filepath.Base(repoName)
-		left = m.theme.Header.Render("git-pulse") + m.theme.Muted.Render("  •  ") + m.theme.Strong.Render(repoName) + m.theme.Muted.Render("  •  ") + branch
+		left = m.theme.Header.Render("git-pulse") + " " + m.theme.HeaderMeta.Render(repoName) + m.theme.Muted.Render("  •  ") + m.theme.Strong.Render(branch)
 	} else {
-		left += m.theme.Muted.Render("  •  ") + headerWindowLabel(m.currentWindow(), false)
+		left += m.theme.Muted.Render("  •  ") + m.theme.HeaderMeta.Render(headerWindowLabel(m.currentWindow(), false))
 	}
 	right := renderWindowTabs(m.currentWindow(), m.theme)
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		padRight(truncate(joinEdge(left, right, width), width), width),
-		m.theme.Muted.Render(strings.Repeat("─", width)),
+		m.theme.Rule.Render(strings.Repeat("─", width)),
 	)
 }
 
@@ -234,9 +234,9 @@ func (m Model) renderWide(width, height int) string {
 	row1, row2, row3 := splitHeights(height)
 
 	rows := []string{
-		m.renderSplitRow(width, row1, true, "velocity", "COMMIT VELOCITY", m.renderVelocity, "authors", "AUTHORS ACTIVE", m.renderAuthors),
-		m.renderSplitRow(width, row2, false, "files", "FILE HOTSPOTS", m.renderFiles, "prs", "PR CYCLE TIME", m.renderPRs),
-		m.renderSplitRow(width, row3, false, "branches", "BRANCH HEALTH", m.renderBranches, "churn", "CODE CHURN", m.renderChurn),
+		m.renderSplitRow(width, row1, true, "velocity", "Commit Velocity", m.renderVelocity, "authors", "Authors Active", m.renderAuthors),
+		m.renderSplitRow(width, row2, false, "files", "File Hotspots", m.renderFiles, "prs", "PR Cycle Time", m.renderPRs),
+		m.renderSplitRow(width, row3, false, "branches", "Branch Health", m.renderBranches, "churn", "Code Churn", m.renderChurn),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
@@ -247,22 +247,22 @@ func (m Model) renderCompact(width, height int) string {
 	var body string
 	switch panelKey {
 	case "velocity":
-		title = "COMMIT VELOCITY"
+		title = "Commit Velocity"
 		body = m.renderVelocity(width-6, height-3)
 	case "authors":
-		title = "AUTHORS ACTIVE"
+		title = "Authors Active"
 		body = m.renderAuthors(width-6, height-3)
 	case "files":
-		title = "FILE HOTSPOTS"
+		title = "File Hotspots"
 		body = m.renderFiles(width-6, height-3)
 	case "prs":
-		title = "PR CYCLE TIME"
+		title = "PR Cycle Time"
 		body = m.renderPRs(width-6, height-3)
 	case "branches":
-		title = "BRANCH HEALTH"
+		title = "Branch Health"
 		body = m.renderBranches(width-6, height-3)
 	default:
-		title = "CODE CHURN"
+		title = "Code Churn"
 		body = m.renderChurn(width-6, height-3)
 	}
 
@@ -270,7 +270,7 @@ func (m Model) renderCompact(width, height int) string {
 	return m.theme.PanelFocus.Width(width).Render(
 		lipgloss.JoinVertical(
 			lipgloss.Left,
-			m.theme.Accent.Render(label),
+			m.theme.Muted.Render(label),
 			m.theme.Accent.Render("▸ "+title),
 			fitLines(body, max(1, height-2)),
 		),
@@ -541,12 +541,12 @@ func (m Model) renderChurn(width, height int) string {
 }
 
 func (m Model) renderFooter(width int) string {
-	keys := m.theme.Accent.Render("tab") + " panel focus   " + m.theme.Accent.Render("1-6") + " jump   " + m.theme.Accent.Render("t") + " time range   " + m.theme.Accent.Render("r") + " refresh   " + m.theme.Accent.Render("q") + " quit "
+	keys := m.theme.Key.Render("tab") + m.theme.Muted.Render(" panel focus   ") + m.theme.Key.Render("1-6") + m.theme.Muted.Render(" jump   ") + m.theme.Key.Render("t") + m.theme.Muted.Render(" time range   ") + m.theme.Key.Render("r") + m.theme.Muted.Render(" refresh   ") + m.theme.Key.Render("q") + m.theme.Muted.Render(" quit ")
 	if m.compactMode() {
-		keys = m.theme.Accent.Render("tab/1-6") + " switch panel   " + m.theme.Accent.Render("t") + " time range   " + m.theme.Accent.Render("r") + " refresh   " + m.theme.Accent.Render("q") + " quit "
+		keys = m.theme.Key.Render("tab/1-6") + m.theme.Muted.Render(" switch panel   ") + m.theme.Key.Render("t") + m.theme.Muted.Render(" time range   ") + m.theme.Key.Render("r") + m.theme.Muted.Render(" refresh   ") + m.theme.Key.Render("q") + m.theme.Muted.Render(" quit ")
 	}
 
-	border := m.theme.Muted.Render(strings.Repeat("─", width))
+	border := m.theme.Rule.Render(strings.Repeat("─", width))
 	if !m.compactMode() {
 		border = m.renderSplitBottomBorder(width, "branches", "churn")
 	}
@@ -554,7 +554,7 @@ func (m Model) renderFooter(width int) string {
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		border,
-		padRight(truncate(joinEdge(keys, truncate(m.status, clamp(width/2, 18, width-6)), width), width), width),
+		padRight(truncate(joinEdge(keys, m.theme.Status.Render(truncate(m.status, clamp(width/2, 18, width-6))), width), width), width),
 	)
 }
 
@@ -645,12 +645,12 @@ func renderWindowTabs(current aggregator.TimeWindow, theme Theme) string {
 	for _, window := range windowOptions() {
 		label := string(window)
 		if window == current {
-			parts = append(parts, theme.Accent.Render("["+label+"]"))
+			parts = append(parts, theme.TabActive.Render(label))
 		} else {
-			parts = append(parts, theme.Muted.Render(label))
+			parts = append(parts, theme.Tab.Render(label))
 		}
 	}
-	return strings.Join(parts, "  ")
+	return strings.Join(parts, "")
 }
 
 func renderWeekHeatmap(values []aggregator.DateValue, rows int) []string {
@@ -899,9 +899,9 @@ func (m Model) renderSplitBorder(top bool, leftWidth, rightWidth int, leftKey, l
 
 func (m Model) centerDivider(leftKey, rightKey string) lipgloss.Style {
 	if panelOrder[m.focused] == leftKey || panelOrder[m.focused] == rightKey {
-		return m.theme.Accent.Copy().Underline(false)
+		return m.theme.Accent
 	}
-	return m.theme.Muted.Copy().Faint(false)
+	return m.theme.Rule
 }
 
 func padRight(value string, width int) string {
@@ -1050,39 +1050,39 @@ func (m Model) paletteFor(key string) panelPalette {
 	switch key {
 	case "velocity":
 		return panelPalette{
-			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "2", Dark: "2"}),
-			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "2", Dark: "2"}).Bold(true),
-			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "2", Dark: "2"}),
+			Border: lipgloss.NewStyle().Foreground(lipgloss.Color("#8bd5a0")),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.Color("#8bd5a0")).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.Color("#8bd5a0")),
 		}
 	case "authors":
 		return panelPalette{
-			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "6", Dark: "6"}),
-			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "6", Dark: "6"}).Bold(true),
-			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "6", Dark: "6"}),
+			Border: lipgloss.NewStyle().Foreground(lipgloss.Color("#eed49f")),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.Color("#eed49f")).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.Color("#eed49f")),
 		}
 	case "files":
 		return panelPalette{
-			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "3", Dark: "3"}),
-			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "3", Dark: "3"}).Bold(true),
-			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "3", Dark: "3"}),
+			Border: lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c17a")),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c17a")).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.Color("#f5c17a")),
 		}
 	case "prs":
 		return panelPalette{
-			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "5", Dark: "5"}),
-			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "5", Dark: "5"}).Bold(true),
-			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "5", Dark: "5"}),
+			Border: lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8")),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8")).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8")),
 		}
 	case "branches":
 		return panelPalette{
-			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "4", Dark: "4"}),
-			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "4", Dark: "4"}).Bold(true),
-			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "4", Dark: "4"}),
+			Border: lipgloss.NewStyle().Foreground(lipgloss.Color("#8aadf4")),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.Color("#8aadf4")).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.Color("#8aadf4")),
 		}
 	default:
 		return panelPalette{
-			Border: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "1", Dark: "1"}),
-			Title:  lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "1", Dark: "1"}).Bold(true),
-			Bar:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "1", Dark: "1"}),
+			Border: lipgloss.NewStyle().Foreground(lipgloss.Color("#7dc4e4")),
+			Title:  lipgloss.NewStyle().Foreground(lipgloss.Color("#7dc4e4")).Bold(true),
+			Bar:    lipgloss.NewStyle().Foreground(lipgloss.Color("#7dc4e4")),
 		}
 	}
 }

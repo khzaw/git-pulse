@@ -80,12 +80,12 @@ func TestViewIncludesLoadedPanels(t *testing.T) {
 
 	view := model.View()
 	require.Contains(t, view, "git-pulse")
-	require.Contains(t, view, "COMMIT VELOCITY")
-	require.Contains(t, view, "AUTHORS ACTIVE")
-	require.Contains(t, view, "FILE HOTSPOTS")
-	require.Contains(t, view, "PR CYCLE TIME")
-	require.Contains(t, view, "BRANCH HEALTH")
-	require.Contains(t, view, "CODE CHURN")
+	require.Contains(t, view, "Commit Velocity")
+	require.Contains(t, view, "Authors Active")
+	require.Contains(t, view, "File Hotspots")
+	require.Contains(t, view, "PR Cycle Time")
+	require.Contains(t, view, "Branch Health")
+	require.Contains(t, view, "Code Churn")
 	require.Contains(t, view, "acme/git-pulse")
 	require.Contains(t, view, "┬")
 	require.Contains(t, view, "┴")
@@ -108,8 +108,8 @@ func TestCompactModeShowsFocusedPanelOnly(t *testing.T) {
 
 	view := model.View()
 	require.Contains(t, view, "panel 3/6")
-	require.Contains(t, view, "FILE HOTSPOTS")
-	require.NotContains(t, view, "AUTHORS ACTIVE")
+	require.Contains(t, view, "File Hotspots")
+	require.NotContains(t, view, "Authors Active")
 }
 
 func TestViewFillsTerminalHeight(t *testing.T) {

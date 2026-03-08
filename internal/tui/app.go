@@ -153,13 +153,22 @@ func (m Model) View() string {
 
 	innerWidth := max(78, m.width-2)
 	innerHeight := max(10, m.height-2)
-	sections := []string{m.renderHeader(innerWidth)}
+	header := m.renderHeader(innerWidth)
+	footer := m.renderFooter(innerWidth)
+	sections := []string{header}
+	var body string
 	if m.compactMode() {
-		sections = append(sections, m.renderCompact(innerWidth, innerHeight-4))
+		body = m.renderCompact(innerWidth, innerHeight-4)
 	} else {
-		sections = append(sections, m.renderWide(innerWidth, innerHeight-4)...)
+		body = lipgloss.JoinVertical(lipgloss.Left, m.renderWide(innerWidth, innerHeight-4)...)
 	}
-	sections = append(sections, m.renderFooter(innerWidth))
+	sections = append(sections, body)
+
+	used := lipgloss.Height(header) + lipgloss.Height(body) + lipgloss.Height(footer)
+	if spare := innerHeight - used; spare > 0 {
+		sections = append(sections, strings.Repeat("\n", spare-1))
+	}
+	sections = append(sections, footer)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
 	content = padBlockHeight(content, innerWidth, innerHeight)
@@ -302,6 +311,7 @@ func (m Model) renderVelocity(width, height int) string {
 		"",
 		m.paletteFor("velocity").Bar.Render(indent(spark, 1)),
 		joinEdge("◂ "+rangeLabel[0], rangeLabel[1]+" ▸", width),
+		"Weekly     " + m.paletteFor("velocity").Bar.Render(sparkline(dateValuesToInts(m.snapshot.Commits.Weekly), clamp(width-12, 10, 34))),
 		"",
 		"Day-of-Week Heatmap",
 		"     M  T  W  T  F  S  S",
@@ -315,15 +325,17 @@ func (m Model) renderAuthors(width, height int) string {
 	thisWeek := m.snapshot.Authors.ActiveThisWeek
 	lastWeek := m.snapshot.Authors.ActiveLastWeek
 	maxActive := max(1, max(thisWeek, lastWeek))
+	leaderboardSlots := clamp(height-8, 3, 10)
 
 	lines := []string{
 		fmt.Sprintf("This Week  %s  %s", meterBar(thisWeek, maxActive, clamp(width-28, 8, 24), m.paletteFor("authors").Bar, m.theme.Muted), m.theme.Positive.Render(fmt.Sprintf("%d authors", thisWeek))),
 		fmt.Sprintf("Last Week  %s  %s", meterBar(lastWeek, maxActive, clamp(width-28, 8, 24), m.paletteFor("authors").Bar.Copy().Faint(true), m.theme.Muted), m.theme.Muted.Render(fmt.Sprintf("%d authors", lastWeek))),
+		fmt.Sprintf("30d Total  %s", m.theme.Strong.Render(fmt.Sprintf("%d active authors", m.snapshot.Authors.ActiveThisMonth))),
 		"",
 		"LEADERBOARD",
 	}
 
-	barWidth := clamp(width-24, 8, 22)
+	barWidth := clamp(width-24, 10, 28)
 	maxCommits := 1
 	for _, author := range m.snapshot.Authors.Leaderboard {
 		if author.Commits > maxCommits {
@@ -331,10 +343,10 @@ func (m Model) renderAuthors(width, height int) string {
 		}
 	}
 	for idx, author := range m.snapshot.Authors.Leaderboard {
-		if idx >= 7 {
+		if idx >= leaderboardSlots {
 			break
 		}
-		name := truncate(author.Name, 12)
+		name := truncate(author.Name, clamp(width-20, 12, 18))
 		lines = append(lines, fmt.Sprintf("%d. %-12s %s %3d", idx+1, name, meterBar(author.Commits, maxCommits, barWidth, m.paletteFor("authors").Bar, m.theme.Muted), author.Commits))
 	}
 
@@ -349,6 +361,9 @@ func (m Model) renderAuthors(width, height int) string {
 		riskStyle = m.theme.Warning
 	}
 	lines = append(lines, "", fmt.Sprintf("Bus Factor  %s  %d  %s", progressBar(m.snapshot.Authors.BusFactor, max(6, m.snapshot.Authors.BusFactor), 10), m.snapshot.Authors.BusFactor, riskStyle.Render(risk)))
+	if len(m.snapshot.Authors.NewContributors) > 0 && len(lines) < height-1 {
+		lines = append(lines, "New        "+truncate(m.snapshot.Authors.NewContributors[0].Name, clamp(width-12, 10, 24)))
+	}
 	return strings.Join(trimLines(lines, height), "\n")
 }
 
@@ -360,9 +375,10 @@ func (m Model) renderFiles(width, height int) string {
 			maxTouches = file.Touches
 		}
 	}
-	barWidth := clamp(width-28, 6, 18)
+	barWidth := clamp(width-28, 8, 24)
+	hotspotSlots := clamp(height-7, 4, 10)
 	for idx, file := range m.snapshot.Files.Hotspots {
-		if idx >= 7 {
+		if idx >= hotspotSlots {
 			break
 		}
 		churn := file.Additions + file.Deletions
@@ -376,8 +392,9 @@ func (m Model) renderFiles(width, height int) string {
 			maxDir = dir.Churn
 		}
 	}
+	dirSlots := clamp(height-len(lines)-1, 1, 5)
 	for idx, dir := range m.snapshot.Files.Directories {
-		if idx >= 3 {
+		if idx >= dirSlots {
 			break
 		}
 		lines = append(lines, fmt.Sprintf("%-16s %s %4d", truncate(dir.Path, 16), meterBar(dir.Churn, maxDir, clamp(width-25, 6, 16), m.paletteFor("files").Bar, m.theme.Muted), dir.Churn))
@@ -416,8 +433,9 @@ func (m Model) renderPRs(width, height int) string {
 		staleLabel = m.theme.Warning.Render(fmt.Sprintf("%d stale", stale))
 	}
 	lines = append(lines, fmt.Sprintf("Open PRs     %2d  (%s)", len(m.prs.OpenPullRequests), staleLabel))
+	openSlots := clamp(height-len(lines), 1, 6)
 	for idx, pr := range m.prs.OpenPullRequests {
-		if idx >= 2 {
+		if idx >= openSlots {
 			break
 		}
 		lines = append(lines, fmt.Sprintf("#%-5d %s", pr.Number, truncate(pr.Title, width-8)))
@@ -432,14 +450,16 @@ func (m Model) renderBranches(width, height int) string {
 		"",
 	}
 
+	activeSlots := clamp((height-3)*2/3, 2, 8)
 	for idx, branch := range m.snapshot.Branches.ActiveBranches {
-		if idx >= 4 {
+		if idx >= activeSlots {
 			break
 		}
 		lines = append(lines, fmt.Sprintf("%-20s %3dd old", truncate(branch.Name, 20), branch.AgeDays))
 	}
+	staleSlots := clamp(height-len(lines), 1, 4)
 	for idx, branch := range m.snapshot.Branches.StaleBranches {
-		if idx >= 2 {
+		if idx >= staleSlots {
 			break
 		}
 		lines = append(lines, fmt.Sprintf("%-20s %3dd old", truncate(branch.Name, 20), branch.AgeDays))
@@ -463,6 +483,8 @@ func (m Model) renderChurn(width, height int) string {
 		renderBreakdownLine(m.snapshot.Overview.ConventionalBreakdown, width),
 		"Commit Rhythm",
 		sparkline(namedValuesToInts(m.snapshot.Commits.Hourly), clamp(width-2, 12, 32)),
+		"Weekday Load",
+		sparkline(namedValuesToInts(m.snapshot.Commits.Weekday), clamp(width-2, 7, 20)),
 	}
 	return strings.Join(trimLines(lines, height), "\n")
 }

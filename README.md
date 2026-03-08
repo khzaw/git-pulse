@@ -25,16 +25,18 @@ make build
 Launch the dashboard in the current repository:
 
 ```bash
-./bin/git-pulse --repo .
+cd /path/to/repo
+git-pulse
 ```
 
 Generate non-interactive output:
 
 ```bash
-./bin/git-pulse --repo . --json
-./bin/git-pulse --repo . --markdown
-./bin/git-pulse --repo . --csv
-./bin/git-pulse --repo . --ci
+cd /path/to/repo
+git-pulse --json
+git-pulse --markdown
+git-pulse --csv
+git-pulse --ci
 ```
 
 If the repository points at GitHub, `git-pulse` will attempt to fetch pull request metrics. Set `GITHUB_TOKEN` for higher API limits.
@@ -61,7 +63,7 @@ default_window: 30d
 Use it with:
 
 ```bash
-./bin/git-pulse --config .git-pulse.yml
+git-pulse --config .git-pulse.yml
 ```
 
 ## Development

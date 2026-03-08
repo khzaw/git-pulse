@@ -125,9 +125,20 @@ func (m Model) View() string {
 	if m.width == 0 {
 		m.width = 160
 	}
+	if m.height == 0 {
+		m.height = 40
+	}
 
 	header := m.renderHeader()
-	panels := []string{
+	panels := m.panels()
+
+	body := m.renderBody(panels)
+	status := m.renderStatusBar()
+	return m.theme.Frame.Padding(1, 2).Render(strings.Join([]string{header, "", body, "", status}, "\n"))
+}
+
+func (m Model) panels() []string {
+	return []string{
 		m.renderPanel("overview", "Overview", m.renderOverview()),
 		m.renderPanel("velocity", "Commit Velocity", m.renderCommitVelocity()),
 		m.renderPanel("authors", "Author Activity", m.renderAuthors()),
@@ -135,10 +146,22 @@ func (m Model) View() string {
 		m.renderPanel("branches", "Branch Health", m.renderBranches()),
 		m.renderPanel("prs", "PR Cycle", m.renderPRs()),
 	}
+}
 
-	body := m.renderGrid(panels)
-	status := m.renderStatusBar()
-	return m.theme.Frame.Padding(1, 2).Render(strings.Join([]string{header, "", body, "", status}, "\n"))
+func (m Model) renderBody(panels []string) string {
+	if m.compactMode() {
+		label := fmt.Sprintf("panel %d/%d", m.focused+1, len(panels))
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			m.theme.Highlight.Render(label),
+			panels[m.focused],
+		)
+	}
+	return m.renderGrid(panels)
+}
+
+func (m Model) compactMode() bool {
+	return m.width < 110 || m.height < 34
 }
 
 func (m Model) refreshCmd() tea.Cmd {
@@ -334,6 +357,9 @@ func (m Model) renderPRs() string {
 
 func (m Model) renderStatusBar() string {
 	keys := "tab focus  1-6 jump  t window  r refresh  q quit"
+	if m.compactMode() {
+		keys = "tab/1-6 switch panel  t window  r refresh  q quit"
+	}
 	return m.theme.Panel.Border(lipgloss.HiddenBorder()).Padding(0, 1).Render(
 		lipgloss.JoinHorizontal(
 			lipgloss.Left,

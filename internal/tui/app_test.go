@@ -81,3 +81,24 @@ func TestViewIncludesLoadedPanels(t *testing.T) {
 	require.Contains(t, view, "PR Cycle")
 	require.Contains(t, view, "acme/git-pulse")
 }
+
+func TestCompactModeShowsFocusedPanelOnly(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(config.Default())
+	require.NoError(t, err)
+	model.width = 80
+	model.height = 24
+	model.loading = false
+	model.focused = 2
+	model.snapshot = aggregator.Snapshot{
+		Authors: aggregator.AuthorActivity{
+			Leaderboard: []aggregator.AuthorSummary{{Name: "Ada", Commits: 5}},
+		},
+	}
+
+	view := model.View()
+	require.Contains(t, view, "panel 3/6")
+	require.Contains(t, view, "Author Activity")
+	require.NotContains(t, view, "Commit Velocity")
+}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -27,26 +28,31 @@ type options struct {
 
 func Execute() error {
 	opts := options{}
+	return newRootCmd(&opts).Execute()
+}
 
+func newRootCmd(opts *options) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:           "git-pulse",
 		Short:         "A terminal dashboard for git repository trends",
+		Long:          "Run git-pulse from inside a git repository to inspect local activity and optional GitHub pull request trends.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return run(context.Background(), opts)
+			return run(context.Background(), *opts)
 		},
 	}
 
-	rootCmd.Flags().StringVar(&opts.RepoPath, "repo", ".", "Path to the repository to analyze")
+	rootCmd.Flags().StringVar(&opts.RepoPath, "repo", ".", "Path override for the repository to analyze")
 	rootCmd.Flags().StringVar(&opts.ConfigPath, "config", "", "Path to a config file")
 	rootCmd.Flags().StringVar(&opts.Theme, "theme", "", "Theme override")
 	rootCmd.Flags().BoolVar(&opts.JSON, "json", false, "Print a JSON snapshot instead of launching the TUI")
 	rootCmd.Flags().BoolVar(&opts.Markdown, "markdown", false, "Print a Markdown snapshot instead of launching the TUI")
 	rootCmd.Flags().BoolVar(&opts.CSV, "csv", false, "Print a CSV summary instead of launching the TUI")
 	rootCmd.Flags().BoolVar(&opts.CI, "ci", false, "Print a JSON snapshot for CI systems")
+	_ = rootCmd.Flags().MarkHidden("repo")
 
-	return rootCmd.Execute()
+	return rootCmd
 }
 
 func run(ctx context.Context, opts options) error {
@@ -59,7 +65,7 @@ func run(ctx context.Context, opts options) error {
 		cfg.Theme = opts.Theme
 	}
 
-	if opts.RepoPath != "" {
+	if opts.RepoPath != "" && opts.RepoPath != "." {
 		cfg.RepoPath = opts.RepoPath
 	}
 
@@ -103,4 +109,16 @@ func run(ctx context.Context, opts options) error {
 	_ = ctx
 	_ = os.Stdout
 	return nil
+}
+
+func HelpText() (string, error) {
+	opts := options{}
+	cmd := newRootCmd(&opts)
+	buffer := &bytes.Buffer{}
+	cmd.SetOut(buffer)
+	cmd.SetErr(buffer)
+	if err := cmd.Help(); err != nil {
+		return "", err
+	}
+	return buffer.String(), nil
 }

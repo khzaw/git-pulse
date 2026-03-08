@@ -11,7 +11,7 @@ import (
 
 	"git-pulse/internal/aggregator"
 	"git-pulse/internal/config"
-	gitrepo "git-pulse/internal/git"
+	"git-pulse/internal/dashboard"
 	"git-pulse/internal/remote"
 )
 
@@ -40,6 +40,7 @@ type Model struct {
 	prs         remote.PRSnapshot
 	remote      remote.RepositoryRef
 	status      string
+	loader      dashboard.Loader
 }
 
 func NewModel(cfg config.Config) (Model, error) {
@@ -69,6 +70,7 @@ func NewModel(cfg config.Config) (Model, error) {
 		focused:     0,
 		windowIndex: index,
 		status:      "loading repository metrics",
+		loader:      dashboard.NewLoader(),
 	}, nil
 }
 
@@ -147,36 +149,16 @@ func (m Model) refreshCmd() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		data, err := gitrepo.Scan(ctx, repoPath)
+		result, err := m.loader.Load(ctx, repoPath, window)
 		if err != nil {
 			return dashboardErrorMsg{err: err}
-		}
-
-		snapshot := aggregator.Aggregate(data, aggregator.Options{
-			Now:    time.Now().UTC(),
-			Window: window,
-		})
-
-		ref, err := remote.Detect(repoPath)
-		if err != nil {
-			return dashboardErrorMsg{err: err}
-		}
-
-		var prs remote.PRSnapshot
-		warning := ""
-		if ref.Provider == remote.ProviderGitHub {
-			client := remote.NewGitHubClient(nil)
-			prs, err = client.FetchSnapshot(ctx, ref)
-			if err != nil {
-				warning = fmt.Sprintf("remote metrics unavailable: %v", err)
-			}
 		}
 
 		return dashboardLoadedMsg{
-			snapshot: snapshot,
-			prs:      prs,
-			remote:   ref,
-			warning:  warning,
+			snapshot: result.Snapshot,
+			prs:      result.PRs,
+			remote:   result.Remote,
+			warning:  result.Warning,
 		}
 	}
 }

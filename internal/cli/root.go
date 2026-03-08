@@ -8,14 +8,21 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
+	"git-pulse/internal/aggregator"
 	"git-pulse/internal/config"
+	"git-pulse/internal/dashboard"
 	"git-pulse/internal/tui"
+	exportpkg "git-pulse/pkg/export"
 )
 
 type options struct {
 	RepoPath   string
 	ConfigPath string
 	Theme      string
+	JSON       bool
+	Markdown   bool
+	CSV        bool
+	CI         bool
 }
 
 func Execute() error {
@@ -34,6 +41,10 @@ func Execute() error {
 	rootCmd.Flags().StringVar(&opts.RepoPath, "repo", ".", "Path to the repository to analyze")
 	rootCmd.Flags().StringVar(&opts.ConfigPath, "config", "", "Path to a config file")
 	rootCmd.Flags().StringVar(&opts.Theme, "theme", "", "Theme override")
+	rootCmd.Flags().BoolVar(&opts.JSON, "json", false, "Print a JSON snapshot instead of launching the TUI")
+	rootCmd.Flags().BoolVar(&opts.Markdown, "markdown", false, "Print a Markdown snapshot instead of launching the TUI")
+	rootCmd.Flags().BoolVar(&opts.CSV, "csv", false, "Print a CSV summary instead of launching the TUI")
+	rootCmd.Flags().BoolVar(&opts.CI, "ci", false, "Print a JSON snapshot for CI systems")
 
 	return rootCmd.Execute()
 }
@@ -50,6 +61,33 @@ func run(ctx context.Context, opts options) error {
 
 	if opts.RepoPath != "" {
 		cfg.RepoPath = opts.RepoPath
+	}
+
+	window := aggregator.TimeWindow(cfg.DefaultWindow)
+	if opts.JSON || opts.Markdown || opts.CSV || opts.CI {
+		loader := dashboard.NewLoader()
+		result, err := loader.Load(ctx, cfg.RepoPath, window)
+		if err != nil {
+			return err
+		}
+
+		switch {
+		case opts.Markdown:
+			_, err = fmt.Fprintln(os.Stdout, exportpkg.Markdown(result))
+		case opts.CSV:
+			payload, exportErr := exportpkg.CSV(result)
+			if exportErr != nil {
+				return exportErr
+			}
+			_, err = fmt.Fprint(os.Stdout, payload)
+		default:
+			payload, exportErr := exportpkg.JSON(result)
+			if exportErr != nil {
+				return exportErr
+			}
+			_, err = fmt.Fprintln(os.Stdout, string(payload))
+		}
+		return err
 	}
 
 	model, err := tui.NewModel(cfg)

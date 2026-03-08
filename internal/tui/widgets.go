@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var sparklineBlocks = []rune("▁▂▃▄▅▆▇█")
@@ -124,12 +125,8 @@ func truncate(value string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(value)
-	if len(runes) <= width {
-		return value
-	}
 	if width == 1 {
 		return "…"
 	}
-	return string(runes[:width-1]) + "…"
+	return ansi.Truncate(value, width, "…")
 }

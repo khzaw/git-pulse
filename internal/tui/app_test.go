@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 
 	"git-pulse/internal/aggregator"
@@ -150,4 +151,64 @@ func TestRenderFilesPrefersPathVisibility(t *testing.T) {
 	view := model.renderFiles(64, 12)
 	require.Contains(t, view, "pkg/alfred/purchase/service/")
 	require.Contains(t, view, "hits churn age")
+}
+
+func TestTruncatePreservesStyledTextWidth(t *testing.T) {
+	t.Parallel()
+
+	value := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render("abcdefghijk")
+	truncated := truncate(value, 8)
+
+	require.Equal(t, 8, lipgloss.Width(truncated))
+	require.NotContains(t, truncated, "�")
+}
+
+func TestViewDoesNotEmitCorruptedReplacementGlyphsForStyledLayout(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(config.Default())
+	require.NoError(t, err)
+	model.width = 170
+	model.height = 42
+	model.loading = false
+	model.snapshot = aggregator.Snapshot{
+		Repository: aggregator.RepositorySummary{Path: "/tmp/repo", DefaultBranch: "main"},
+		Overview: aggregator.Overview{
+			CommitCount:             15,
+			AuthorCount:             1,
+			Additions:               4956,
+			Deletions:               487,
+			CurrentStreak:           1,
+			LongestStreak:           15,
+			ConventionalCommitShare: 0,
+		},
+		Commits: aggregator.CommitActivity{
+			Daily:   []aggregator.DateValue{{Date: time.Now(), Value: 15}},
+			Weekly:  []aggregator.DateValue{{Date: time.Now(), Value: 15}},
+			Weekday: []aggregator.NamedValue{{Name: "Sun", Value: 15}},
+			Hourly:  []aggregator.NamedValue{{Name: "18", Value: 9}},
+		},
+		Authors: aggregator.AuthorActivity{
+			ActiveThisWeek:  1,
+			ActiveThisMonth: 1,
+			BusFactor:       1,
+			Leaderboard: []aggregator.AuthorSummary{
+				{Name: "Kaung Htet", Commits: 15, Additions: 5443},
+			},
+			NewContributors: []aggregator.AuthorSummary{{Name: "Kaung Htet"}},
+		},
+		Files: aggregator.FileActivity{
+			Hotspots: []aggregator.FileSummary{
+				{Path: "internal/tui/app.go", Touches: 8, Additions: 91, LastChange: time.Now()},
+				{Path: "internal/tui/app_test.go", Touches: 7, Additions: 84, LastChange: time.Now()},
+			},
+			Directories: []aggregator.DirectorySummary{{Path: "internal", Churn: 175, Touches: 15}},
+		},
+		Branches: aggregator.BranchActivity{
+			ActiveBranches: []aggregator.BranchSummary{{Name: "master", AgeDays: 0}},
+		},
+	}
+
+	view := model.View()
+	require.NotContains(t, view, "�")
 }

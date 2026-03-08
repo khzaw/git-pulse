@@ -19,6 +19,10 @@ type Loader struct {
 	Now      func() time.Time
 }
 
+type LoadOptions struct {
+	IncludeRemote bool
+}
+
 type Result struct {
 	Snapshot aggregator.Snapshot  `json:"snapshot"`
 	PRs      remote.PRSnapshot    `json:"prs"`
@@ -36,6 +40,18 @@ func NewLoader() Loader {
 }
 
 func (l Loader) Load(ctx context.Context, repoPath string, window aggregator.TimeWindow) (Result, error) {
+	return l.LoadWithOptions(ctx, repoPath, window, LoadOptions{IncludeRemote: true})
+}
+
+func (l Loader) LoadLocal(ctx context.Context, repoPath string, window aggregator.TimeWindow) (Result, error) {
+	return l.LoadWithOptions(ctx, repoPath, window, LoadOptions{})
+}
+
+func (l Loader) LoadRemote(ctx context.Context, repoPath string, window aggregator.TimeWindow) (Result, error) {
+	return l.LoadWithOptions(ctx, repoPath, window, LoadOptions{IncludeRemote: true})
+}
+
+func (l Loader) LoadWithOptions(ctx context.Context, repoPath string, window aggregator.TimeWindow, opts LoadOptions) (Result, error) {
 	now := time.Now().UTC()
 	if l.Now != nil {
 		now = l.Now().UTC()
@@ -59,7 +75,7 @@ func (l Loader) Load(ctx context.Context, repoPath string, window aggregator.Tim
 	}
 	result.Remote = ref
 
-	if ref.Provider == remote.ProviderGitHub && l.FetchPRs != nil {
+	if opts.IncludeRemote && ref.Provider == remote.ProviderGitHub && l.FetchPRs != nil {
 		fetchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
 

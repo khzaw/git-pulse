@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -106,4 +107,18 @@ func TestCompactModeShowsFocusedPanelOnly(t *testing.T) {
 	require.Contains(t, view, "panel 3/6")
 	require.Contains(t, view, "FILE HOTSPOTS")
 	require.NotContains(t, view, "AUTHORS ACTIVE")
+}
+
+func TestViewFillsTerminalHeight(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(config.Default())
+	require.NoError(t, err)
+	model.width = 120
+	model.height = 40
+	model.loading = false
+	model.snapshot = aggregator.Snapshot{}
+
+	view := model.View()
+	require.Equal(t, 40, len(strings.Split(view, "\n")))
 }

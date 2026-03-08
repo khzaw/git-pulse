@@ -15,6 +15,7 @@ func TestHelpHidesRepoFlag(t *testing.T) {
 	require.NotContains(t, help, "--repo")
 	require.Contains(t, help, "--json")
 	require.Contains(t, help, "--markdown")
+	require.Contains(t, help, "--remote")
 }
 
 func TestRepoFlagRemainsAvailableButHidden(t *testing.T) {

@@ -37,7 +37,10 @@ git-pulse --json
 git-pulse --markdown
 git-pulse --csv
 git-pulse --ci
+git-pulse --json --remote
 ```
+
+`--remote` opts snapshot/export modes into GitHub pull request data. Interactive TUI mode loads local stats first and fetches remote PR data in the background.
 
 If the repository points at GitHub, `git-pulse` will attempt to fetch pull request metrics. Set `GITHUB_TOKEN` for higher API limits.
 

@@ -21,9 +21,13 @@ var panelOrder = []string{"velocity", "authors", "files", "prs", "branches", "ch
 
 type dashboardLoadedMsg struct {
 	snapshot aggregator.Snapshot
-	prs      remote.PRSnapshot
 	remote   remote.RepositoryRef
 	warning  string
+}
+
+type dashboardRemoteLoadedMsg struct {
+	prs     remote.PRSnapshot
+	warning string
 }
 
 type dashboardErrorMsg struct {
@@ -43,6 +47,7 @@ type Model struct {
 	remote      remote.RepositoryRef
 	status      string
 	loader      dashboard.Loader
+	remoteBusy  bool
 }
 
 type panelPalette struct {
@@ -87,15 +92,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dashboardLoadedMsg:
 		m.loading = false
 		m.snapshot = msg.snapshot
-		m.prs = msg.prs
 		m.remote = msg.remote
+		m.prs = remote.PRSnapshot{}
 		if msg.warning != "" {
 			m.status = msg.warning
 		} else {
 			m.status = fmt.Sprintf("loaded %d commits for %s", m.snapshot.Overview.CommitCount, windowLabel(m.currentWindow()))
 		}
+		if m.remote.Provider == remote.ProviderGitHub {
+			m.remoteBusy = true
+			m.status = m.status + "  |  loading remote PR metrics"
+			return m, m.refreshRemoteCmd()
+		}
+	case dashboardRemoteLoadedMsg:
+		m.remoteBusy = false
+		if msg.warning != "" {
+			m.status = msg.warning
+		} else {
+			m.prs = msg.prs
+			m.status = fmt.Sprintf("loaded %d commits for %s", m.snapshot.Overview.CommitCount, windowLabel(m.currentWindow()))
+		}
 	case dashboardErrorMsg:
 		m.loading = false
+		m.remoteBusy = false
 		m.status = msg.err.Error()
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -110,10 +129,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "t":
 			m.windowIndex = (m.windowIndex + 1) % len(windowOptions())
 			m.loading = true
+			m.remoteBusy = false
 			m.status = fmt.Sprintf("reloading %s", windowLabel(m.currentWindow()))
 			return m, m.refreshCmd()
 		case "r":
 			m.loading = true
+			m.remoteBusy = false
 			m.status = "refreshing"
 			return m, m.refreshCmd()
 		}
@@ -131,15 +152,18 @@ func (m Model) View() string {
 	}
 
 	innerWidth := max(78, m.width-2)
+	innerHeight := max(10, m.height-2)
 	sections := []string{m.renderHeader(innerWidth)}
 	if m.compactMode() {
-		sections = append(sections, m.renderCompact(innerWidth))
+		sections = append(sections, m.renderCompact(innerWidth, innerHeight-4))
 	} else {
-		sections = append(sections, m.renderWide(innerWidth)...)
+		sections = append(sections, m.renderWide(innerWidth, innerHeight-4)...)
 	}
 	sections = append(sections, m.renderFooter(innerWidth))
 
-	return m.theme.Frame.Width(innerWidth + 2).Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
+	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
+	content = padBlockHeight(content, innerWidth, innerHeight)
+	return m.theme.Frame.Width(innerWidth + 2).Height(innerHeight).Render(content)
 }
 
 func (m Model) compactMode() bool {
@@ -154,16 +178,34 @@ func (m Model) refreshCmd() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		result, err := m.loader.Load(ctx, repoPath, window)
+		result, err := m.loader.LoadLocal(ctx, repoPath, window)
 		if err != nil {
 			return dashboardErrorMsg{err: err}
 		}
 
 		return dashboardLoadedMsg{
 			snapshot: result.Snapshot,
-			prs:      result.PRs,
 			remote:   result.Remote,
 			warning:  result.Warning,
+		}
+	}
+}
+
+func (m Model) refreshRemoteCmd() tea.Cmd {
+	repoPath := m.cfg.RepoPath
+	window := m.currentWindow()
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		result, err := m.loader.LoadRemote(ctx, repoPath, window)
+		if err != nil {
+			return dashboardRemoteLoadedMsg{warning: err.Error()}
+		}
+		return dashboardRemoteLoadedMsg{
+			prs:     result.PRs,
+			warning: result.Warning,
 		}
 	}
 }
@@ -184,49 +226,50 @@ func (m Model) renderHeader(width int) string {
 		Render(truncate(line, width))
 }
 
-func (m Model) renderWide(width int) []string {
+func (m Model) renderWide(width, height int) []string {
 	left := (width - 1) / 2
 	right := width - left - 1
+	row1, row2, row3 := splitHeights(height)
 
 	return []string{
 		lipgloss.JoinHorizontal(lipgloss.Top,
-			m.renderSection("velocity", "COMMIT VELOCITY", m.renderVelocity(left-4, 12), left, 14),
-			m.renderSection("authors", "AUTHORS ACTIVE", m.renderAuthors(right-4, 12), right, 14),
+			m.renderSection("velocity", "COMMIT VELOCITY", m.renderVelocity(left-4, row1-2), left, row1),
+			m.renderSection("authors", "AUTHORS ACTIVE", m.renderAuthors(right-4, row1-2), right, row1),
 		),
 		lipgloss.JoinHorizontal(lipgloss.Top,
-			m.renderSection("files", "FILE HOTSPOTS", m.renderFiles(left-4, 12), left, 14),
-			m.renderSection("prs", "PR CYCLE TIME", m.renderPRs(right-4, 12), right, 14),
+			m.renderSection("files", "FILE HOTSPOTS", m.renderFiles(left-4, row2-2), left, row2),
+			m.renderSection("prs", "PR CYCLE TIME", m.renderPRs(right-4, row2-2), right, row2),
 		),
 		lipgloss.JoinHorizontal(lipgloss.Top,
-			m.renderSection("branches", "BRANCH HEALTH", m.renderBranches(left-4, 8), left, 10),
-			m.renderSection("churn", "CODE CHURN", m.renderChurn(right-4, 8), right, 10),
+			m.renderSection("branches", "BRANCH HEALTH", m.renderBranches(left-4, row3-2), left, row3),
+			m.renderSection("churn", "CODE CHURN", m.renderChurn(right-4, row3-2), right, row3),
 		),
 	}
 }
 
-func (m Model) renderCompact(width int) string {
+func (m Model) renderCompact(width, height int) string {
 	panelKey := panelOrder[m.focused]
 	var title string
 	var body string
 	switch panelKey {
 	case "velocity":
 		title = "COMMIT VELOCITY"
-		body = m.renderVelocity(width-6, 14)
+		body = m.renderVelocity(width-6, height-3)
 	case "authors":
 		title = "AUTHORS ACTIVE"
-		body = m.renderAuthors(width-6, 14)
+		body = m.renderAuthors(width-6, height-3)
 	case "files":
 		title = "FILE HOTSPOTS"
-		body = m.renderFiles(width-6, 14)
+		body = m.renderFiles(width-6, height-3)
 	case "prs":
 		title = "PR CYCLE TIME"
-		body = m.renderPRs(width-6, 14)
+		body = m.renderPRs(width-6, height-3)
 	case "branches":
 		title = "BRANCH HEALTH"
-		body = m.renderBranches(width-6, 14)
+		body = m.renderBranches(width-6, height-3)
 	default:
 		title = "CODE CHURN"
-		body = m.renderChurn(width-6, 14)
+		body = m.renderChurn(width-6, height-3)
 	}
 
 	label := fmt.Sprintf("panel %d/%d", m.focused+1, len(panelOrder))
@@ -235,7 +278,7 @@ func (m Model) renderCompact(width int) string {
 			lipgloss.Left,
 			m.theme.Accent.Render(label),
 			m.theme.Accent.Render("▸ "+title),
-			fitLines(body, 15),
+			fitLines(body, max(1, height-2)),
 		),
 	)
 }
@@ -345,6 +388,9 @@ func (m Model) renderFiles(width, height int) string {
 func (m Model) renderPRs(width, height int) string {
 	if m.remote.Provider != remote.ProviderGitHub {
 		return fitLines("No GitHub remote detected.\nPR metrics appear automatically when `origin` points at GitHub.", height)
+	}
+	if m.remoteBusy {
+		return fitLines("Loading remote pull request metrics...\nLocal repository stats are already available.", height)
 	}
 	if m.prs.Repository == "" {
 		return fitLines("PR metrics unavailable.\nLocal analytics are loaded; remote data did not arrive in time.", height)
@@ -702,6 +748,51 @@ func padRight(value string, width int) string {
 		return value
 	}
 	return value + strings.Repeat(" ", width-current)
+}
+
+func padBlockHeight(content string, width, height int) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = padRight(truncate(line, width), width)
+	}
+	for len(lines) < height {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func splitHeights(total int) (int, int, int) {
+	if total < 9 {
+		return 3, 3, 3
+	}
+	row1 := max(8, total*36/100)
+	row2 := max(8, total*36/100)
+	row3 := total - row1 - row2
+	if row3 < 6 {
+		row3 = 6
+		if row1 > 8 {
+			row1--
+		}
+		if row2 > 8 && row1+row2+row3 > total {
+			row2--
+		}
+	}
+	for row1+row2+row3 > total {
+		if row2 >= row1 && row2 > 8 {
+			row2--
+		} else if row1 > 8 {
+			row1--
+		} else {
+			row3--
+		}
+	}
+	for row1+row2+row3 < total {
+		row3++
+	}
+	return row1, row2, row3
 }
 
 func weeklyCycleToHours(values []remote.WeeklyCycle) []int {

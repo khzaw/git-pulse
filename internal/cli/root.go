@@ -24,6 +24,7 @@ type options struct {
 	Markdown   bool
 	CSV        bool
 	CI         bool
+	Remote     bool
 }
 
 func Execute() error {
@@ -50,6 +51,7 @@ func newRootCmd(opts *options) *cobra.Command {
 	rootCmd.Flags().BoolVar(&opts.Markdown, "markdown", false, "Print a Markdown snapshot instead of launching the TUI")
 	rootCmd.Flags().BoolVar(&opts.CSV, "csv", false, "Print a CSV summary instead of launching the TUI")
 	rootCmd.Flags().BoolVar(&opts.CI, "ci", false, "Print a JSON snapshot for CI systems")
+	rootCmd.Flags().BoolVar(&opts.Remote, "remote", false, "Include remote pull request data in snapshot/export modes")
 	_ = rootCmd.Flags().MarkHidden("repo")
 
 	return rootCmd
@@ -72,7 +74,9 @@ func run(ctx context.Context, opts options) error {
 	window := aggregator.TimeWindow(cfg.DefaultWindow)
 	if opts.JSON || opts.Markdown || opts.CSV || opts.CI {
 		loader := dashboard.NewLoader()
-		result, err := loader.Load(ctx, cfg.RepoPath, window)
+		result, err := loader.LoadWithOptions(ctx, cfg.RepoPath, window, dashboard.LoadOptions{
+			IncludeRemote: opts.Remote,
+		})
 		if err != nil {
 			return err
 		}

@@ -1,10 +1,13 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,7 +68,7 @@ func Scan(ctx context.Context, path string) (RepositoryData, error) {
 		return RepositoryData{}, fmt.Errorf("resolve HEAD: %w", err)
 	}
 
-	commits, err := collectCommits(ctx, repo, headRef.Hash())
+	commits, err := collectCommits(ctx, path, repo, headRef.Hash())
 	if err != nil {
 		return RepositoryData{}, err
 	}
@@ -88,7 +91,15 @@ func Scan(ctx context.Context, path string) (RepositoryData, error) {
 	}, nil
 }
 
-func collectCommits(ctx context.Context, repo *git.Repository, head plumbing.Hash) ([]CommitRecord, error) {
+func collectCommits(ctx context.Context, repoPath string, repo *git.Repository, head plumbing.Hash) ([]CommitRecord, error) {
+	commits, err := collectCommitsFromGit(ctx, repoPath)
+	if err == nil {
+		return commits, nil
+	}
+	return collectCommitsFromGoGit(ctx, repoPath, repo, head)
+}
+
+func collectCommitsFromGoGit(ctx context.Context, repoPath string, repo *git.Repository, head plumbing.Hash) ([]CommitRecord, error) {
 	iter, err := repo.Log(&git.LogOptions{From: head})
 	if err != nil {
 		return nil, fmt.Errorf("iterate commits: %w", err)
@@ -101,7 +112,7 @@ func collectCommits(ctx context.Context, repo *git.Repository, head plumbing.Has
 			return err
 		}
 
-		stats, err := commit.Stats()
+		stats, err := commitStats(ctx, repoPath, commit)
 		if err != nil {
 			return fmt.Errorf("collect stats for %s: %w", commit.Hash.String(), err)
 		}
@@ -130,6 +141,23 @@ func collectCommits(ctx context.Context, repo *git.Repository, head plumbing.Has
 		return nil, err
 	}
 
+	sort.Slice(commits, func(i, j int) bool {
+		return commits[i].When.Before(commits[j].When)
+	})
+	return commits, nil
+}
+
+func collectCommitsFromGit(ctx context.Context, repoPath string) ([]CommitRecord, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "log", "--date=iso-strict", "--numstat", "--format=%x1e%H%x1f%an%x1f%ae%x1f%aI%x1f%s", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	commits, err := parseGitLogOutput(output)
+	if err != nil {
+		return nil, err
+	}
 	sort.Slice(commits, func(i, j int) bool {
 		return commits[i].When.Before(commits[j].When)
 	})
@@ -220,4 +248,104 @@ func conventionalType(message string) string {
 		return ""
 	}
 	return match[1]
+}
+
+func commitStats(ctx context.Context, repoPath string, commit *object.Commit) (object.FileStats, error) {
+	stats, err := commit.Stats()
+	if err == nil {
+		return stats, nil
+	}
+	return commitStatsFromGit(ctx, repoPath, commit.Hash.String())
+}
+
+func commitStatsFromGit(ctx context.Context, repoPath, hash string) (object.FileStats, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "show", "--numstat", "--format=", hash, "--")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseNumStat(output), nil
+}
+
+func parseNumStat(output []byte) object.FileStats {
+	lines := bytes.Split(output, []byte{'\n'})
+	stats := make(object.FileStats, 0, len(lines))
+	for _, raw := range lines {
+		line := strings.TrimSpace(string(raw))
+		if line == "" {
+			continue
+		}
+
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) != 3 {
+			continue
+		}
+
+		additions, addErr := parseNumStatValue(fields[0])
+		deletions, delErr := parseNumStatValue(fields[1])
+		if addErr != nil || delErr != nil {
+			continue
+		}
+
+		stats = append(stats, object.FileStat{
+			Name:     fields[2],
+			Addition: additions,
+			Deletion: deletions,
+		})
+	}
+	return stats
+}
+
+func parseNumStatValue(value string) (int, error) {
+	if value == "-" {
+		return 0, nil
+	}
+	return strconv.Atoi(value)
+}
+
+func parseGitLogOutput(output []byte) ([]CommitRecord, error) {
+	records := bytes.Split(output, []byte{0x1e})
+	commits := make([]CommitRecord, 0, len(records))
+
+	for _, record := range records {
+		record = bytes.TrimSpace(record)
+		if len(record) == 0 {
+			continue
+		}
+
+		lines := bytes.Split(record, []byte{'\n'})
+		header := strings.Split(string(lines[0]), "\x1f")
+		if len(header) != 5 {
+			return nil, fmt.Errorf("parse git log header: unexpected field count %d", len(header))
+		}
+
+		when, err := time.Parse(time.RFC3339, header[3])
+		if err != nil {
+			return nil, fmt.Errorf("parse git log time %q: %w", header[3], err)
+		}
+
+		commit := CommitRecord{
+			Hash:             header[0],
+			AuthorName:       header[1],
+			AuthorEmail:      header[2],
+			When:             when.UTC(),
+			Subject:          header[4],
+			ConventionalType: conventionalType(header[4]),
+		}
+
+		stats := parseNumStat(bytes.Join(lines[1:], []byte{'\n'}))
+		for _, stat := range stats {
+			commit.Additions += stat.Addition
+			commit.Deletions += stat.Deletion
+			commit.Files = append(commit.Files, FileStat{
+				Path:      stat.Name,
+				Additions: stat.Addition,
+				Deletions: stat.Deletion,
+			})
+		}
+
+		commits = append(commits, commit)
+	}
+
+	return commits, nil
 }

@@ -108,19 +108,39 @@ func (c *GitHubClient) FetchSnapshot(ctx context.Context, ref RepositoryRef) (PR
 }
 
 func (c *GitHubClient) fetchPullRequests(ctx context.Context, owner, repo string) ([]PullRequest, error) {
+	openPRs, err := c.listPullRequests(ctx, owner, repo, "open", 1, 20)
+	if err != nil {
+		return nil, err
+	}
+
+	closedPRs, err := c.listPullRequests(ctx, owner, repo, "closed", 1, 50)
+	if err != nil {
+		return nil, err
+	}
+
+	pullRequests := append(openPRs, filterRecentClosed(closedPRs, c.now().AddDate(0, 0, -120))...)
+	if err := c.populateReviewTimes(ctx, owner, repo, pullRequests); err != nil {
+		return nil, err
+	}
+
+	return pullRequests, nil
+}
+
+func (c *GitHubClient) listPullRequests(ctx context.Context, owner, repo, state string, pages int, perPage int) ([]PullRequest, error) {
 	opts := &github.PullRequestListOptions{
-		State: "all",
-		Sort:  "updated",
+		State:     state,
+		Sort:      "updated",
+		Direction: "desc",
 		ListOptions: github.ListOptions{
-			PerPage: 100,
+			PerPage: perPage,
 		},
 	}
 
 	var pullRequests []PullRequest
-	for page := 0; page < 3; page++ {
+	for page := 0; page < pages; page++ {
 		ghPRs, response, err := c.service.List(ctx, owner, repo, opts)
 		if err != nil {
-			return nil, fmt.Errorf("list pull requests: %w", err)
+			return nil, fmt.Errorf("list %s pull requests: %w", state, err)
 		}
 
 		for _, pr := range ghPRs {
@@ -132,11 +152,6 @@ func (c *GitHubClient) fetchPullRequests(ctx context.Context, owner, repo string
 		}
 		opts.Page = response.NextPage
 	}
-
-	if err := c.populateReviewTimes(ctx, owner, repo, pullRequests); err != nil {
-		return nil, err
-	}
-
 	return pullRequests, nil
 }
 
@@ -145,7 +160,7 @@ func (c *GitHubClient) populateReviewTimes(ctx context.Context, owner, repo stri
 	group, groupCtx := errgroup.WithContext(ctx)
 
 	for idx := range prs {
-		if prs[idx].Number == 0 {
+		if prs[idx].Number == 0 || prs[idx].MergedAt.IsZero() {
 			continue
 		}
 		idx := idx
@@ -259,6 +274,24 @@ func summarizeWindow(label string, prs []PullRequest, cutoff time.Time) WindowMe
 		MedianCycleTime:  medianDuration(cycleDurations),
 		MedianReviewTime: medianDuration(reviewDurations),
 	}
+}
+
+func filterRecentClosed(prs []PullRequest, cutoff time.Time) []PullRequest {
+	filtered := make([]PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if !pr.MergedAt.IsZero() {
+			if pr.MergedAt.Before(cutoff) {
+				continue
+			}
+			filtered = append(filtered, pr)
+			continue
+		}
+		if !pr.ClosedAt.IsZero() && pr.ClosedAt.Before(cutoff) {
+			continue
+		}
+		filtered = append(filtered, pr)
+	}
+	return filtered
 }
 
 func weeklyCycle(prs []PullRequest) []WeeklyCycle {

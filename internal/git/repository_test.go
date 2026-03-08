@@ -75,6 +75,34 @@ func TestConventionalType(t *testing.T) {
 	require.Empty(t, conventionalType("Ship it"))
 }
 
+func TestParseNumStat(t *testing.T) {
+	t.Parallel()
+
+	stats := parseNumStat([]byte("12\t3\tinternal/tui/app.go\n-\t-\tassets/logo.png\n1\t0\tREADME.md\n"))
+	require.Len(t, stats, 3)
+	require.Equal(t, "internal/tui/app.go", stats[0].Name)
+	require.Equal(t, 12, stats[0].Addition)
+	require.Equal(t, 3, stats[0].Deletion)
+	require.Equal(t, "assets/logo.png", stats[1].Name)
+	require.Equal(t, 0, stats[1].Addition)
+	require.Equal(t, 0, stats[1].Deletion)
+}
+
+func TestParseGitLogOutput(t *testing.T) {
+	t.Parallel()
+
+	output := []byte("\x1eabc123\x1fAda\x1fada@example.com\x1f2026-03-08T12:00:00Z\x1ffeat: add dashboard\n12\t3\tinternal/tui/app.go\n1\t0\tREADME.md\n\x1edef456\x1fBob\x1fbob@example.com\x1f2026-03-09T01:00:00Z\x1ffix: adjust layout\n4\t2\tinternal/tui/widgets.go\n")
+	commits, err := parseGitLogOutput(output)
+	require.NoError(t, err)
+	require.Len(t, commits, 2)
+	require.Equal(t, "abc123", commits[0].Hash)
+	require.Equal(t, "feat", commits[0].ConventionalType)
+	require.Equal(t, 13, commits[0].Additions)
+	require.Equal(t, 3, commits[0].Deletions)
+	require.Len(t, commits[0].Files, 2)
+	require.Equal(t, "fix", commits[1].ConventionalType)
+}
+
 func initTestRepo(t *testing.T, dir string) *git.Repository {
 	t.Helper()
 

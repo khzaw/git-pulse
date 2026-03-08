@@ -46,6 +46,34 @@ func TestLoaderBuildsDashboardResult(t *testing.T) {
 	require.Equal(t, 1, result.Snapshot.Overview.CommitCount)
 }
 
+func TestLoaderKeepsLocalSnapshotWhenPRFetchFails(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	require.NoError(t, err)
+	_, err = repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"git@github.com:acme/git-pulse.git"}})
+	require.NoError(t, err)
+
+	commitFile(t, repo, dir, "README.md", "hello\n", object.Signature{
+		Name:  "Ada",
+		Email: "ada@example.com",
+		When:  time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC),
+	}, "feat: bootstrap")
+
+	loader := Loader{
+		FetchPRs: fakeFetcher{err: context.DeadlineExceeded},
+		Now: func() time.Time {
+			return time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+		},
+	}
+
+	result, err := loader.Load(context.Background(), dir, aggregator.Window30Days)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Snapshot.Overview.CommitCount)
+	require.Contains(t, result.Warning, "remote metrics unavailable")
+}
+
 type fakeFetcher struct {
 	snapshot remote.PRSnapshot
 	err      error

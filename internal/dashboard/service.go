@@ -60,7 +60,10 @@ func (l Loader) Load(ctx context.Context, repoPath string, window aggregator.Tim
 	result.Remote = ref
 
 	if ref.Provider == remote.ProviderGitHub && l.FetchPRs != nil {
-		prs, err := l.FetchPRs.FetchSnapshot(ctx, ref)
+		fetchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		defer cancel()
+
+		prs, err := l.FetchPRs.FetchSnapshot(fetchCtx, ref)
 		if err != nil {
 			result.Warning = fmt.Sprintf("remote metrics unavailable: %v", err)
 			return result, nil

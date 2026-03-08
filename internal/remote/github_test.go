@@ -103,10 +103,30 @@ func TestPopulateReviewTimes(t *testing.T) {
 		now: func() time.Time { return reviewedAt },
 	}
 
-	prs := []PullRequest{{Number: 9}}
+	prs := []PullRequest{{
+		Number:    9,
+		CreatedAt: reviewedAt.Add(-24 * time.Hour),
+		MergedAt:  reviewedAt.Add(24 * time.Hour),
+	}}
 	err := client.populateReviewTimes(context.Background(), "acme", "git-pulse", prs)
 	require.NoError(t, err)
 	require.Equal(t, reviewedAt, prs[0].FirstReviewedAt)
+}
+
+func TestFilterRecentClosed(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+	prs := []PullRequest{
+		{Number: 1, MergedAt: now.AddDate(0, 0, -20)},
+		{Number: 2, MergedAt: now.AddDate(0, 0, -140)},
+		{Number: 3, ClosedAt: now.AddDate(0, 0, -7)},
+	}
+
+	filtered := filterRecentClosed(prs, now.AddDate(0, 0, -120))
+	require.Len(t, filtered, 2)
+	require.Equal(t, 1, filtered[0].Number)
+	require.Equal(t, 3, filtered[1].Number)
 }
 
 type fakePullRequestService struct {

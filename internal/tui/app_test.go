@@ -86,6 +86,8 @@ func TestViewIncludesLoadedPanels(t *testing.T) {
 	require.Contains(t, view, "BRANCH HEALTH")
 	require.Contains(t, view, "CODE CHURN")
 	require.Contains(t, view, "acme/git-pulse")
+	require.Contains(t, view, "┬")
+	require.Contains(t, view, "┴")
 }
 
 func TestCompactModeShowsFocusedPanelOnly(t *testing.T) {

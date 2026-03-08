@@ -390,21 +390,22 @@ func (m Model) renderAuthors(width, height int) string {
 }
 
 func (m Model) renderFiles(width, height int) string {
-	lines := []string{"Most Changed Files            hits  churn"}
+	lines := []string{joinEdge("Most Changed Files", "hits churn age", width)}
 	maxTouches := 1
 	for _, file := range m.snapshot.Files.Hotspots {
 		if file.Touches > maxTouches {
 			maxTouches = file.Touches
 		}
 	}
-	barWidth := clamp(width-28, 8, 24)
+	barWidth := clamp(width/9, 4, 10)
+	pathWidth := max(18, width-barWidth-17)
 	hotspotSlots := clamp((height-4)*2/3, 4, 10)
 	for idx, file := range m.snapshot.Files.Hotspots {
 		if idx >= hotspotSlots {
 			break
 		}
 		churn := file.Additions + file.Deletions
-		lines = append(lines, fmt.Sprintf("%-22s %s %2d %s %s", truncate(file.Path, 22), meterBar(file.Touches, maxTouches, barWidth, m.paletteFor("files").Bar, m.theme.Muted), file.Touches, m.theme.Warning.Render(fmt.Sprintf("+%d", churn)), m.theme.Muted.Render(ageLabel(file.LastChange))))
+		lines = append(lines, fmt.Sprintf("%s %s %2d %5s %4s", padRight(truncate(file.Path, pathWidth), pathWidth), meterBar(file.Touches, maxTouches, barWidth, m.paletteFor("files").Bar, m.theme.Muted), file.Touches, m.theme.Warning.Render(fmt.Sprintf("+%d", churn)), m.theme.Muted.Render(ageLabel(file.LastChange))))
 	}
 
 	lines = append(lines, "", "Hot Directories")
@@ -414,12 +415,14 @@ func (m Model) renderFiles(width, height int) string {
 			maxDir = dir.Churn
 		}
 	}
+	dirBarWidth := clamp(width/8, 6, 16)
+	dirPathWidth := max(12, width-dirBarWidth-12)
 	dirSlots := clamp(height-len(lines)-1, 1, 5)
 	for idx, dir := range m.snapshot.Files.Directories {
 		if idx >= dirSlots {
 			break
 		}
-		lines = append(lines, fmt.Sprintf("%-16s %s %4d  %2dt", truncate(dir.Path, 16), meterBar(dir.Churn, maxDir, clamp(width-30, 6, 16), m.paletteFor("files").Bar, m.theme.Muted), dir.Churn, dir.Touches))
+		lines = append(lines, fmt.Sprintf("%s %s %5d %3dt", padRight(truncate(dir.Path, dirPathWidth), dirPathWidth), meterBar(dir.Churn, maxDir, dirBarWidth, m.paletteFor("files").Bar, m.theme.Muted), dir.Churn, dir.Touches))
 	}
 	if len(lines) < height && len(m.snapshot.Files.Hotspots) == 0 {
 		lines = append(lines, "No file churn in the selected window.")

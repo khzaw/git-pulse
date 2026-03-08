@@ -124,3 +124,30 @@ func TestViewFillsTerminalHeight(t *testing.T) {
 	view := model.View()
 	require.Equal(t, 40, len(strings.Split(view, "\n")))
 }
+
+func TestRenderFilesPrefersPathVisibility(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(config.Default())
+	require.NoError(t, err)
+	model.snapshot = aggregator.Snapshot{
+		Files: aggregator.FileActivity{
+			Hotspots: []aggregator.FileSummary{
+				{
+					Path:       "pkg/alfred/purchase/service/internal/handler.go",
+					Touches:    8,
+					Additions:  80,
+					Deletions:  11,
+					LastChange: time.Now(),
+				},
+			},
+			Directories: []aggregator.DirectorySummary{
+				{Path: "pkg/alfred/purchase/service", Churn: 91, Touches: 8},
+			},
+		},
+	}
+
+	view := model.renderFiles(64, 12)
+	require.Contains(t, view, "pkg/alfred/purchase/service/")
+	require.Contains(t, view, "hits churn age")
+}

@@ -42,6 +42,55 @@ func sparkline(values []int, width int) string {
 	return out.String()
 }
 
+func columnChart(values []int, width, height int) []string {
+	if width <= 0 || height <= 0 {
+		return nil
+	}
+	sampled := sampleInts(values, width)
+	if len(sampled) == 0 {
+		sampled = make([]int, width)
+	}
+
+	maxValue := 0
+	for _, value := range sampled {
+		if value > maxValue {
+			maxValue = value
+		}
+	}
+
+	rows := make([]strings.Builder, height)
+	for idx := 0; idx < height; idx++ {
+		rows[idx].Grow(len(sampled))
+	}
+
+	for _, value := range sampled {
+		level := 0
+		if maxValue > 0 {
+			level = int(math.Round(float64(value) / float64(maxValue) * float64(height)))
+		}
+		if level > height {
+			level = height
+		}
+		for row := 0; row < height; row++ {
+			threshold := height - row
+			switch {
+			case level >= threshold:
+				rows[row].WriteRune('█')
+			case level == threshold-1:
+				rows[row].WriteRune('▄')
+			default:
+				rows[row].WriteRune(' ')
+			}
+		}
+	}
+
+	out := make([]string, 0, height)
+	for _, row := range rows {
+		out = append(out, strings.TrimRight(row.String(), " "))
+	}
+	return out
+}
+
 func progressBar(value, total, width int) string {
 	if width <= 0 {
 		return ""

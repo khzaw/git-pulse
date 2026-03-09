@@ -286,30 +286,33 @@ func (m Model) renderVelocity(width, height int) string {
 	avg, peak := avgAndPeak(values, windowDays(m.currentWindow()))
 	trend := trendLabel(values)
 	trend = m.colorizeTrend(trend)
-	spark := sparkline(values, max(18, width-4))
+	chartWidth := max(24, width-2)
+	dailyChart := columnChart(values, chartWidth, min(4, max(2, height/4)))
 	rangeLabel := dateRangeLabel(m.snapshot.Commits.Daily)
 	heatmap := renderWeekHeatmap(m.snapshot.Commits.Daily, 5)
-	hourly := sparkline(namedValuesToInts(m.snapshot.Commits.Hourly), clamp(width-10, 8, 24))
-	weekday := sparkline(namedValuesToInts(m.snapshot.Commits.Weekday), clamp(width-10, 7, 20))
+	weeklyChart := sparkline(dateValuesToInts(m.snapshot.Commits.Weekly), clamp(width-12, 12, 42))
+	hourly := sparkline(namedValuesToInts(m.snapshot.Commits.Hourly), clamp(width-10, 12, 32))
+	weekday := sparkline(namedValuesToInts(m.snapshot.Commits.Weekday), clamp(width-10, 7, 24))
 	busiestDay, busiestDayCount := maxNamedValueEntry(m.snapshot.Commits.Weekday)
 	busiestHour, busiestHourCount := maxNamedValueEntry(m.snapshot.Commits.Hourly)
 
 	lines := []string{
 		joinEdge(fmt.Sprintf("Commits/Day (%s)", windowLabel(m.currentWindow())), fmt.Sprintf("%s  avg %.1f  peak %d", trend, avg, peak), width),
-		"",
-		m.paletteFor("velocity").Bar.Render(indent(spark, 1)),
+	}
+	for _, row := range dailyChart {
+		lines = append(lines, m.paletteFor("velocity").Bar.Render(indent(row, 1)))
+	}
+	lines = append(lines,
 		joinEdge("◂ "+rangeLabel[0], rangeLabel[1]+" ▸", width),
-		"Weekly     " + m.paletteFor("velocity").Bar.Render(sparkline(dateValuesToInts(m.snapshot.Commits.Weekly), clamp(width-12, 10, 34))),
-		"Weekday    " + m.paletteFor("velocity").Bar.Render(weekday),
-		"Hours      " + m.theme.Muted.Render(hourly),
-		"",
+		"Weekly   "+m.paletteFor("velocity").Bar.Render(weeklyChart),
+		"Weekday  "+m.paletteFor("velocity").Bar.Render(weekday),
+		"Hours    "+m.theme.Muted.Render(hourly),
 		"Day-of-Week Heatmap",
 		"     M  T  W  T  F  S  S",
-	}
+	)
 	lines = append(lines, heatmap...)
 	lines = append(
 		lines,
-		"",
 		joinEdge(
 			fmt.Sprintf("Streak  %s", m.theme.Positive.Render(fmt.Sprintf("%d days", m.snapshot.Overview.CurrentStreak))),
 			fmt.Sprintf("Longest  %s", m.theme.Strong.Render(fmt.Sprintf("%d days", m.snapshot.Overview.LongestStreak))),
@@ -1152,6 +1155,13 @@ func fallback(value, defaultValue string) string {
 
 func max(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b

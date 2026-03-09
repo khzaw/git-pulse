@@ -153,6 +153,46 @@ func TestRenderFilesPrefersPathVisibility(t *testing.T) {
 	require.Contains(t, view, "hits churn age")
 }
 
+func TestRenderVelocityUsesMultiLineChart(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(config.Default())
+	require.NoError(t, err)
+	now := time.Now()
+	model.snapshot = aggregator.Snapshot{
+		Overview: aggregator.Overview{
+			CurrentStreak: 2,
+			LongestStreak: 4,
+		},
+		Commits: aggregator.CommitActivity{
+			Daily: []aggregator.DateValue{
+				{Date: now.AddDate(0, 0, -5), Value: 1},
+				{Date: now.AddDate(0, 0, -4), Value: 3},
+				{Date: now.AddDate(0, 0, -3), Value: 2},
+				{Date: now.AddDate(0, 0, -2), Value: 6},
+				{Date: now.AddDate(0, 0, -1), Value: 4},
+				{Date: now, Value: 5},
+			},
+			Weekly: []aggregator.DateValue{
+				{Date: now.AddDate(0, 0, -21), Value: 8},
+				{Date: now.AddDate(0, 0, -14), Value: 11},
+				{Date: now.AddDate(0, 0, -7), Value: 14},
+			},
+			Weekday: []aggregator.NamedValue{
+				{Name: "Mon", Value: 3}, {Name: "Tue", Value: 2}, {Name: "Wed", Value: 5}, {Name: "Thu", Value: 4},
+			},
+			Hourly: []aggregator.NamedValue{
+				{Name: "09", Value: 1}, {Name: "10", Value: 3}, {Name: "11", Value: 5}, {Name: "12", Value: 2},
+			},
+		},
+	}
+
+	view := model.renderVelocity(70, 18)
+	require.Contains(t, view, "Weekly")
+	require.Contains(t, view, "Day-of-Week Heatmap")
+	require.GreaterOrEqual(t, strings.Count(view, "█"), 4)
+}
+
 func TestSplitWidthsAllowsAsymmetricRows(t *testing.T) {
 	t.Parallel()
 

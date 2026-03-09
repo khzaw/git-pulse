@@ -113,6 +113,32 @@ func TestPopulateReviewTimes(t *testing.T) {
 	require.Equal(t, reviewedAt, prs[0].FirstReviewedAt)
 }
 
+func TestFetchSnapshotKeepsPRMetricsWhenReviewLookupTimesOut(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+	client := &GitHubClient{
+		service: fakePullRequestService{
+			pullRequestsByState: map[string][]*github.PullRequest{
+				"open":   {},
+				"closed": {{Number: github.Ptr(9), Title: github.Ptr("Ship dashboard"), State: github.Ptr("closed"), CreatedAt: &github.Timestamp{Time: now.AddDate(0, 0, -4)}, MergedAt: &github.Timestamp{Time: now.AddDate(0, 0, -1)}}},
+			},
+			reviewErr: context.DeadlineExceeded,
+		},
+		now: func() time.Time { return now },
+	}
+
+	snapshot, err := client.FetchSnapshot(context.Background(), RepositoryRef{
+		Provider: ProviderGitHub,
+		Owner:    "acme",
+		Name:     "git-pulse",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "acme/git-pulse", snapshot.Repository)
+	require.Equal(t, 1, snapshot.MergedPullRequests)
+	require.False(t, snapshot.HasReviewData)
+}
+
 func TestFilterRecentClosed(t *testing.T) {
 	t.Parallel()
 
@@ -130,14 +156,22 @@ func TestFilterRecentClosed(t *testing.T) {
 }
 
 type fakePullRequestService struct {
-	pullRequests []*github.PullRequest
-	reviews      map[int][]*github.PullRequestReview
+	pullRequests        []*github.PullRequest
+	pullRequestsByState map[string][]*github.PullRequest
+	reviews             map[int][]*github.PullRequestReview
+	reviewErr           error
 }
 
-func (f fakePullRequestService) List(_ context.Context, _, _ string, _ *github.PullRequestListOptions) ([]*github.PullRequest, *github.Response, error) {
+func (f fakePullRequestService) List(_ context.Context, _, _ string, opts *github.PullRequestListOptions) ([]*github.PullRequest, *github.Response, error) {
+	if f.pullRequestsByState != nil {
+		return f.pullRequestsByState[opts.State], &github.Response{}, nil
+	}
 	return f.pullRequests, &github.Response{}, nil
 }
 
 func (f fakePullRequestService) ListReviews(_ context.Context, _, _ string, number int, _ *github.ListOptions) ([]*github.PullRequestReview, *github.Response, error) {
+	if f.reviewErr != nil {
+		return nil, &github.Response{}, f.reviewErr
+	}
 	return f.reviews[number], &github.Response{}, nil
 }

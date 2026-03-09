@@ -234,9 +234,9 @@ func (m Model) renderWide(width, height int) string {
 	row1, row2, row3 := splitHeights(height)
 
 	rows := []string{
-		m.renderSplitRow(width, row1, true, "velocity", "Commit Velocity", m.renderVelocity, "authors", "Authors Active", m.renderAuthors),
-		m.renderSplitRow(width, row2, false, "files", "File Hotspots", m.renderFiles, "prs", "PR Cycle Time", m.renderPRs),
-		m.renderSplitRow(width, row3, false, "branches", "Branch Health", m.renderBranches, "churn", "Code Churn", m.renderChurn),
+		m.renderSplitRow(width, row1, 52, true, "velocity", "Commit Velocity", m.renderVelocity, "authors", "Authors Active", m.renderAuthors),
+		m.renderSplitRow(width, row2, 56, false, "files", "File Hotspots", m.renderFiles, "prs", "PR Cycle Time", m.renderPRs),
+		m.renderSplitRow(width, row3, 46, false, "branches", "Branch Health", m.renderBranches, "churn", "Code Churn", m.renderChurn),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
@@ -826,8 +826,7 @@ func renderFramedSection(width, height int, title, body string, palette panelPal
 }
 
 func (m Model) renderSplitBottomBorder(width int, leftKey, rightKey string) string {
-	leftWidth := (width - 1) / 2
-	rightWidth := width - leftWidth - 1
+	leftWidth, rightWidth := splitWidths(width, 46)
 	return m.paletteFor(leftKey).Border.Render("└"+strings.Repeat("─", max(0, leftWidth-1))) +
 		m.centerDivider(leftKey, rightKey).Render("┴") +
 		m.paletteFor(rightKey).Border.Render(strings.Repeat("─", max(0, rightWidth-1))+"┘")
@@ -836,6 +835,7 @@ func (m Model) renderSplitBottomBorder(width int, leftKey, rightKey string) stri
 func (m Model) renderSplitRow(
 	width int,
 	height int,
+	leftPercent int,
 	top bool,
 	leftKey string,
 	leftTitle string,
@@ -844,8 +844,7 @@ func (m Model) renderSplitRow(
 	rightTitle string,
 	rightRenderer func(int, int) string,
 ) string {
-	leftWidth := (width - 1) / 2
-	rightWidth := width - leftWidth - 1
+	leftWidth, rightWidth := splitWidths(width, leftPercent)
 	contentHeight := max(1, height-1)
 
 	leftBody := strings.Split(fitLines(leftRenderer(leftWidth-2, contentHeight), contentHeight), "\n")
@@ -955,6 +954,37 @@ func splitHeights(total int) (int, int, int) {
 		row3++
 	}
 	return row1, row2, row3
+}
+
+func splitWidths(total, leftPercent int) (int, int) {
+	if total <= 3 {
+		return 1, 1
+	}
+	if leftPercent < 35 {
+		leftPercent = 35
+	}
+	if leftPercent > 65 {
+		leftPercent = 65
+	}
+
+	left := total * leftPercent / 100
+	right := total - left - 1
+
+	if left < 28 {
+		left = 28
+		right = total - left - 1
+	}
+	if right < 24 {
+		right = 24
+		left = total - right - 1
+	}
+	if left < 1 {
+		left = 1
+	}
+	if right < 1 {
+		right = 1
+	}
+	return left, right
 }
 
 func weeklyCycleToHours(values []remote.WeeklyCycle) []int {

@@ -153,6 +153,18 @@ func TestRenderFilesPrefersPathVisibility(t *testing.T) {
 	require.Contains(t, view, "hits churn age")
 }
 
+func TestSplitWidthsAllowsAsymmetricRows(t *testing.T) {
+	t.Parallel()
+
+	left, right := splitWidths(120, 56)
+	require.Equal(t, 67, left)
+	require.Equal(t, 52, right)
+
+	left, right = splitWidths(120, 46)
+	require.Equal(t, 55, left)
+	require.Equal(t, 64, right)
+}
+
 func TestTruncatePreservesStyledTextWidth(t *testing.T) {
 	t.Parallel()
 

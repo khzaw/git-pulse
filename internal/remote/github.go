@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -120,7 +121,10 @@ func (c *GitHubClient) fetchPullRequests(ctx context.Context, owner, repo string
 
 	pullRequests := append(openPRs, filterRecentClosed(closedPRs, c.now().AddDate(0, 0, -120))...)
 	if err := c.populateReviewTimes(ctx, owner, repo, pullRequests); err != nil {
-		return nil, err
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return pullRequests, nil
+		}
+		return pullRequests, nil
 	}
 
 	return pullRequests, nil

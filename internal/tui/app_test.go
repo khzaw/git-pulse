@@ -147,6 +147,37 @@ func TestPressingOneOpensVelocityDetailAndEscReturns(t *testing.T) {
 	require.Equal(t, "", dashboardModel.detailPanel)
 }
 
+func TestPressingFiveOpensBranchDetailAndEscReturns(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(config.Default())
+	require.NoError(t, err)
+	model.width = 150
+	model.height = 42
+	model.loading = false
+	model.snapshot = aggregator.Snapshot{
+		Branches: aggregator.BranchActivity{
+			ActiveBranches: []aggregator.BranchSummary{
+				{Name: "master", AgeDays: 6},
+			},
+			StaleBranches: []aggregator.BranchSummary{
+				{Name: "release_PABLO.24.31-fixup", AgeDays: 592},
+			},
+		},
+	}
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("5")})
+	detailModel := updated.(Model)
+	require.Equal(t, "branches", detailModel.detailPanel)
+	require.Contains(t, detailModel.View(), "BRANCH HEALTH")
+	require.Contains(t, detailModel.View(), "Active Queue")
+	require.Contains(t, detailModel.View(), "Stale Branches")
+
+	updated, _ = detailModel.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	dashboardModel := updated.(Model)
+	require.Equal(t, "", dashboardModel.detailPanel)
+}
+
 func TestRenderFilesPrefersPathVisibility(t *testing.T) {
 	t.Parallel()
 
@@ -172,6 +203,27 @@ func TestRenderFilesPrefersPathVisibility(t *testing.T) {
 	view := model.renderFiles(64, 12)
 	require.Contains(t, view, "pkg/alfred/purchase/service/")
 	require.Contains(t, view, "hits churn age")
+}
+
+func TestRenderBranchesPrefersBranchVisibility(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(config.Default())
+	require.NoError(t, err)
+	model.snapshot = aggregator.Snapshot{
+		Branches: aggregator.BranchActivity{
+			ActiveBranches: []aggregator.BranchSummary{
+				{Name: "release_PABLO.24.31-deliveryhero-hotfix-payment-routing", AgeDays: 6},
+			},
+			StaleBranches: []aggregator.BranchSummary{
+				{Name: "PYMNTINT-26-generic-payment-intent-cleanup-and-follow-up", AgeDays: 1021},
+			},
+		},
+	}
+
+	view := model.renderBranches(68, 12)
+	require.Contains(t, view, "release_PABLO.24.31")
+	require.Contains(t, view, "PYMNTINT-26-generic")
 }
 
 func TestRenderVelocityUsesMultiLineChart(t *testing.T) {
@@ -252,6 +304,33 @@ func TestRenderVelocityDetailIncludesBreakdownSections(t *testing.T) {
 	require.Contains(t, view, "COMMITS PER DAY")
 	require.Contains(t, view, "Hour Of Day")
 	require.Contains(t, view, "Weekly Summary")
+}
+
+func TestRenderBranchesDetailIncludesBranchTables(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(config.Default())
+	require.NoError(t, err)
+	model.snapshot = aggregator.Snapshot{
+		Branches: aggregator.BranchActivity{
+			ActiveBranches: []aggregator.BranchSummary{
+				{Name: "master", AgeDays: 6},
+				{Name: "feature/search-index-upgrade", AgeDays: 2},
+			},
+			StaleBranches: []aggregator.BranchSummary{
+				{Name: "release_PABLO.24.31-fixup", AgeDays: 592},
+			},
+			LastTag:            "delop-549-db-migration-gdp-03",
+			ReleaseCadenceDays: 12,
+		},
+	}
+
+	view := model.renderBranchesDetail(120, 24)
+	require.Contains(t, view, "Longest-lived stale branch")
+	require.Contains(t, view, "Active Queue")
+	require.Contains(t, view, "Stale Branches")
+	require.Contains(t, view, "feature/search-index-upgrade")
+	require.Contains(t, view, "release_PABLO.24.31-fixup")
 }
 
 func TestSplitWidthsAllowsAsymmetricRows(t *testing.T) {

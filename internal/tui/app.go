@@ -143,7 +143,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailPanel = "velocity"
 				m.focused = 0
 			}
-		case "2", "3", "4", "5", "6":
+		case "5":
+			if m.detailPanel == "branches" {
+				m.detailPanel = ""
+			} else {
+				m.detailPanel = "branches"
+				m.focused = 4
+			}
+		case "2", "3", "4", "6":
 			if m.detailPanel != "" {
 				return m, nil
 			}
@@ -273,6 +280,8 @@ func (m Model) renderDetail(width, height int) string {
 	switch m.detailPanel {
 	case "velocity":
 		return m.renderVelocityDetail(width, height)
+	case "branches":
+		return m.renderBranchesDetail(width, height)
 	default:
 		return fitLines("detail view unavailable", height)
 	}
@@ -317,7 +326,7 @@ func (m Model) renderCompact(width, height int) string {
 func (m Model) renderDetailHeader(width int) string {
 	repoName := m.repositoryName()
 	branch := fallback(m.snapshot.Repository.DefaultBranch, "HEAD")
-	title := "Commit Velocity"
+	title := detailTitle(m.detailPanel)
 	left := m.theme.Header.Render("git-pulse") + " " + m.theme.HeaderMeta.Render(strings.ToUpper(title)) + m.theme.Muted.Render("  •  ") + m.theme.HeaderMeta.Render(repoName) + m.theme.Muted.Render("  •  ") + m.theme.Strong.Render(branch)
 	right := m.theme.Key.Render("esc") + m.theme.Muted.Render(" back to dashboard")
 	return lipgloss.JoinVertical(
@@ -650,14 +659,16 @@ func (m Model) renderBranches(width, height int) string {
 			maxAge = branch.AgeDays
 		}
 	}
+	barWidth := clamp(width/7, 5, 10)
+	nameWidth := max(24, width-barWidth-6)
 
 	activeSlots := clamp((height-6)/2, 2, 6)
 	for idx, branch := range m.snapshot.Branches.ActiveBranches {
 		if idx >= activeSlots {
 			break
 		}
-		freshness := meterBar(maxAge-branch.AgeDays, maxAge, clamp(width-28, 8, 18), m.paletteFor("branches").Bar, m.theme.Muted)
-		lines = append(lines, fmt.Sprintf("%-18s %s %3dd", truncate(branch.Name, 18), freshness, branch.AgeDays))
+		freshness := meterBar(maxAge-branch.AgeDays, maxAge, barWidth, m.paletteFor("branches").Bar, m.theme.Muted)
+		lines = append(lines, fmt.Sprintf("%s %s %3dd", padRight(truncate(branch.Name, nameWidth), nameWidth), freshness, branch.AgeDays))
 	}
 	lines = append(lines, "")
 	lines = append(lines, "STALE BRANCHES")
@@ -666,13 +677,92 @@ func (m Model) renderBranches(width, height int) string {
 		if idx >= staleSlots {
 			break
 		}
-		ageBar := meterBar(branch.AgeDays, maxAge, clamp(width-28, 8, 18), m.theme.Warning, m.theme.Muted)
-		lines = append(lines, fmt.Sprintf("%-18s %s %3dd", truncate(branch.Name, 18), ageBar, branch.AgeDays))
+		ageBar := meterBar(branch.AgeDays, maxAge, barWidth, m.theme.Warning, m.theme.Muted)
+		lines = append(lines, fmt.Sprintf("%s %s %3dd", padRight(truncate(branch.Name, nameWidth), nameWidth), ageBar, branch.AgeDays))
 	}
 	if len(m.snapshot.Branches.StaleBranches) == 0 && len(lines) < height {
 		lines = append(lines, "none")
 	}
 	return strings.Join(trimLines(lines, height), "\n")
+}
+
+func (m Model) renderBranchesDetail(width, height int) string {
+	topHeight := max(8, height/4)
+	bottomHeight := max(12, height-topHeight-1)
+	top := m.renderBranchesFocusSummary(width, topHeight)
+	bottom := m.renderBranchesFocusLists(width, bottomHeight)
+	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+}
+
+func (m Model) renderBranchesFocusSummary(width, height int) string {
+	lines := []string{
+		joinEdge(
+			fmt.Sprintf("ACTIVE %s", m.theme.Positive.Render(fmt.Sprintf("%d", len(m.snapshot.Branches.ActiveBranches)))),
+			fmt.Sprintf("STALE %s", m.theme.Warning.Render(fmt.Sprintf("%d", len(m.snapshot.Branches.StaleBranches)))),
+			width,
+		),
+		joinEdge(
+			fmt.Sprintf("LAST TAG  %s", fallback(m.snapshot.Branches.LastTag, "none")),
+			fmt.Sprintf("CADENCE  %s", compactDuration(time.Duration(m.snapshot.Branches.ReleaseCadenceDays*24)*time.Hour)),
+			width,
+		),
+		"",
+		"Longest-lived stale branch",
+		m.theme.Warning.Render(longestBranchLabel(m.snapshot.Branches.StaleBranches)),
+	}
+	return fitLines(strings.Join(lines, "\n"), height)
+}
+
+func (m Model) renderBranchesFocusLists(width, height int) string {
+	leftWidth, rightWidth := splitWidths(width, 45)
+	header := m.paletteFor("branches").Border.Render("├") +
+		m.paletteFor("branches").Title.Render(" Active Queue ") +
+		m.paletteFor("branches").Border.Render(strings.Repeat("─", max(0, leftWidth-lipgloss.Width(" Active Queue ")-1))) +
+		m.centerDivider("branches", "branches").Render("┬") +
+		m.paletteFor("branches").Title.Render(" Stale Branches ") +
+		m.paletteFor("branches").Border.Render(strings.Repeat("─", max(0, rightWidth-lipgloss.Width(" Stale Branches ")-1))+"┤")
+
+	contentHeight := max(1, height-1)
+	left := strings.Split(fitLines(m.renderBranchList(m.snapshot.Branches.ActiveBranches, leftWidth-2, contentHeight, false), contentHeight), "\n")
+	right := strings.Split(fitLines(m.renderBranchList(m.snapshot.Branches.StaleBranches, rightWidth-2, contentHeight, true), contentHeight), "\n")
+
+	lines := []string{header}
+	for idx := 0; idx < contentHeight; idx++ {
+		lines = append(lines,
+			m.paletteFor("branches").Border.Render("│")+
+				padRight(truncate(left[idx], leftWidth-1), leftWidth-1)+
+				m.centerDivider("branches", "branches").Render("│")+
+				padRight(truncate(right[idx], rightWidth-1), rightWidth-1)+
+				m.paletteFor("branches").Border.Render("│"),
+		)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderBranchList(branches []aggregator.BranchSummary, width, height int, stale bool) string {
+	if len(branches) == 0 {
+		return fitLines("none", height)
+	}
+	maxAge := 1
+	for _, branch := range branches {
+		if branch.AgeDays > maxAge {
+			maxAge = branch.AgeDays
+		}
+	}
+	barWidth := clamp(width/8, 5, 10)
+	nameWidth := max(22, width-barWidth-7)
+	lines := make([]string, 0, min(len(branches), height))
+	for idx, branch := range branches {
+		if idx >= height {
+			break
+		}
+		bar := meterBar(maxAge-branch.AgeDays, maxAge, barWidth, m.paletteFor("branches").Bar, m.theme.Muted)
+		if stale {
+			bar = meterBar(branch.AgeDays, maxAge, barWidth, m.theme.Warning, m.theme.Muted)
+		}
+		lines = append(lines, fmt.Sprintf("%s %s %4dd", padRight(truncate(branch.Name, nameWidth), nameWidth), bar, branch.AgeDays))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderChurn(width, height int) string {
@@ -1188,6 +1278,30 @@ func ageLabel(ts time.Time) string {
 		age = 0
 	}
 	return fmt.Sprintf("%dd", age)
+}
+
+func detailTitle(panel string) string {
+	switch panel {
+	case "velocity":
+		return "Commit Velocity"
+	case "branches":
+		return "Branch Health"
+	default:
+		return "Detail"
+	}
+}
+
+func longestBranchLabel(branches []aggregator.BranchSummary) string {
+	if len(branches) == 0 {
+		return "none"
+	}
+	longest := branches[0]
+	for _, branch := range branches[1:] {
+		if branch.AgeDays > longest.AgeDays {
+			longest = branch
+		}
+	}
+	return fmt.Sprintf("%s  (%dd old)", longest.Name, longest.AgeDays)
 }
 
 func maxNamedValueEntry(values []aggregator.NamedValue) (string, int) {

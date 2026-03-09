@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 
@@ -126,6 +127,26 @@ func TestViewFillsTerminalHeight(t *testing.T) {
 	require.Equal(t, 40, len(strings.Split(view, "\n")))
 }
 
+func TestPressingOneOpensVelocityDetailAndEscReturns(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(config.Default())
+	require.NoError(t, err)
+	model.width = 150
+	model.height = 42
+	model.loading = false
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	detailModel := updated.(Model)
+	require.Equal(t, "velocity", detailModel.detailPanel)
+	require.Contains(t, detailModel.View(), "back to dashboard")
+	require.Contains(t, detailModel.View(), "COMMITS PER DAY")
+
+	updated, _ = detailModel.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	dashboardModel := updated.(Model)
+	require.Equal(t, "", dashboardModel.detailPanel)
+}
+
 func TestRenderFilesPrefersPathVisibility(t *testing.T) {
 	t.Parallel()
 
@@ -191,6 +212,46 @@ func TestRenderVelocityUsesMultiLineChart(t *testing.T) {
 	require.Contains(t, view, "Weekly")
 	require.Contains(t, view, "Day-of-Week Heatmap")
 	require.GreaterOrEqual(t, strings.Count(view, "█"), 4)
+}
+
+func TestRenderVelocityDetailIncludesBreakdownSections(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(config.Default())
+	require.NoError(t, err)
+	now := time.Now()
+	model.snapshot = aggregator.Snapshot{
+		Overview: aggregator.Overview{
+			CurrentStreak: 2,
+			LongestStreak: 4,
+		},
+		Commits: aggregator.CommitActivity{
+			Daily: []aggregator.DateValue{
+				{Date: now.AddDate(0, 0, -5), Value: 1},
+				{Date: now.AddDate(0, 0, -4), Value: 3},
+				{Date: now.AddDate(0, 0, -3), Value: 2},
+				{Date: now.AddDate(0, 0, -2), Value: 6},
+				{Date: now.AddDate(0, 0, -1), Value: 4},
+				{Date: now, Value: 5},
+			},
+			Weekly: []aggregator.DateValue{
+				{Date: now.AddDate(0, 0, -21), Value: 8},
+				{Date: now.AddDate(0, 0, -14), Value: 11},
+				{Date: now.AddDate(0, 0, -7), Value: 14},
+			},
+			Weekday: []aggregator.NamedValue{
+				{Name: "Mon", Value: 3}, {Name: "Tue", Value: 2}, {Name: "Wed", Value: 5}, {Name: "Thu", Value: 4},
+			},
+			Hourly: []aggregator.NamedValue{
+				{Name: "09", Value: 1}, {Name: "10", Value: 3}, {Name: "11", Value: 5}, {Name: "12", Value: 2},
+			},
+		},
+	}
+
+	view := model.renderVelocityDetail(120, 28)
+	require.Contains(t, view, "COMMITS PER DAY")
+	require.Contains(t, view, "Hour Of Day")
+	require.Contains(t, view, "Weekly Summary")
 }
 
 func TestSplitWidthsAllowsAsymmetricRows(t *testing.T) {

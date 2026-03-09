@@ -41,6 +41,7 @@ type Model struct {
 	height      int
 	loading     bool
 	focused     int
+	detailPanel string
 	windowIndex int
 	snapshot    aggregator.Snapshot
 	prs         remote.PRSnapshot
@@ -120,11 +121,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			if m.detailPanel != "" {
+				m.detailPanel = ""
+				return m, nil
+			}
 		case "tab":
+			if m.detailPanel != "" {
+				return m, nil
+			}
 			m.focused = (m.focused + 1) % len(panelOrder)
 		case "shift+tab":
+			if m.detailPanel != "" {
+				return m, nil
+			}
 			m.focused = (m.focused + len(panelOrder) - 1) % len(panelOrder)
-		case "1", "2", "3", "4", "5", "6":
+		case "1":
+			if m.detailPanel == "velocity" {
+				m.detailPanel = ""
+			} else {
+				m.detailPanel = "velocity"
+				m.focused = 0
+			}
+		case "2", "3", "4", "5", "6":
+			if m.detailPanel != "" {
+				return m, nil
+			}
 			m.focused = int(msg.String()[0] - '1')
 		case "t":
 			m.windowIndex = (m.windowIndex + 1) % len(windowOptions())
@@ -155,9 +177,15 @@ func (m Model) View() string {
 	innerHeight := max(10, m.height-2)
 	header := m.renderHeader(innerWidth)
 	footer := m.renderFooter(innerWidth)
+	if m.detailPanel != "" {
+		header = m.renderDetailHeader(innerWidth)
+		footer = m.renderDetailFooter(innerWidth)
+	}
 	var body string
 	bodyHeight := max(1, innerHeight-lipgloss.Height(header)-lipgloss.Height(footer))
-	if m.compactMode() {
+	if m.detailPanel != "" {
+		body = m.renderDetail(innerWidth, bodyHeight)
+	} else if m.compactMode() {
 		body = m.renderCompact(innerWidth, bodyHeight)
 	} else {
 		body = m.renderWide(innerWidth, bodyHeight)
@@ -241,6 +269,15 @@ func (m Model) renderWide(width, height int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+func (m Model) renderDetail(width, height int) string {
+	switch m.detailPanel {
+	case "velocity":
+		return m.renderVelocityDetail(width, height)
+	default:
+		return fitLines("detail view unavailable", height)
+	}
+}
+
 func (m Model) renderCompact(width, height int) string {
 	panelKey := panelOrder[m.focused]
 	var title string
@@ -274,6 +311,28 @@ func (m Model) renderCompact(width, height int) string {
 			m.theme.Accent.Render("▸ "+title),
 			fitLines(body, max(1, height-2)),
 		),
+	)
+}
+
+func (m Model) renderDetailHeader(width int) string {
+	repoName := m.repositoryName()
+	branch := fallback(m.snapshot.Repository.DefaultBranch, "HEAD")
+	title := "Commit Velocity"
+	left := m.theme.Header.Render("git-pulse") + " " + m.theme.HeaderMeta.Render(strings.ToUpper(title)) + m.theme.Muted.Render("  •  ") + m.theme.HeaderMeta.Render(repoName) + m.theme.Muted.Render("  •  ") + m.theme.Strong.Render(branch)
+	right := m.theme.Key.Render("esc") + m.theme.Muted.Render(" back to dashboard")
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		padRight(truncate(joinEdge(left, right, width), width), width),
+		m.theme.Rule.Render(strings.Repeat("─", width)),
+	)
+}
+
+func (m Model) renderDetailFooter(width int) string {
+	keys := m.theme.Key.Render("esc") + m.theme.Muted.Render(" dashboard   ") + m.theme.Key.Render("t") + m.theme.Muted.Render(" time range   ") + m.theme.Key.Render("r") + m.theme.Muted.Render(" refresh   ") + m.theme.Key.Render("q") + m.theme.Muted.Render(" quit ")
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.theme.Rule.Render(strings.Repeat("─", width)),
+		padRight(truncate(joinEdge(keys, m.theme.Status.Render(truncate(m.status, clamp(width/2, 18, width-6))), width), width), width),
 	)
 }
 
@@ -324,6 +383,105 @@ func (m Model) renderVelocity(width, height int) string {
 			width,
 		),
 	)
+	return strings.Join(trimLines(lines, height), "\n")
+}
+
+func (m Model) renderVelocityDetail(width, height int) string {
+	topHeight := max(14, height*3/5)
+	bottomHeight := max(8, height-topHeight-1)
+	chart := m.renderVelocityFocusChart(width, topHeight)
+	lower := m.renderVelocityFocusLower(width, bottomHeight)
+	return lipgloss.JoinVertical(lipgloss.Left, chart, lower)
+}
+
+func (m Model) renderVelocityFocusChart(width, height int) string {
+	values := dateValuesToInts(m.snapshot.Commits.Daily)
+	avg, peak := avgAndPeak(values, windowDays(m.currentWindow()))
+	chartHeight := max(8, height-7)
+	chartWidth := max(40, width-8)
+	rows := renderAxisColumnChart(values, chartWidth, chartHeight)
+	rangeLabel := dateRangeLabel(m.snapshot.Commits.Daily)
+
+	lines := []string{
+		joinEdge(fmt.Sprintf("COMMITS PER DAY (%s)", strings.ToUpper(headerWindowLabel(m.currentWindow(), false))), fmt.Sprintf("avg: %.1f  peak: %d", avg, peak), width),
+		"",
+	}
+	lines = append(lines, rows...)
+	lines = append(lines,
+		padRight("    "+rangeLabel[0], width/2)+m.theme.Muted.Render(truncate(rangeLabel[1], width-width/2-4)),
+		joinEdge(
+			m.theme.Muted.Render("    ─ 7d avg    ━━ 30d avg"),
+			m.colorizeTrend(trendLabel(values)),
+			width,
+		),
+	)
+	return fitLines(strings.Join(lines, "\n"), height)
+}
+
+func (m Model) renderVelocityFocusLower(width, height int) string {
+	leftWidth, rightWidth := splitWidths(width, 42)
+	header := m.paletteFor("velocity").Border.Render("├") +
+		m.paletteFor("velocity").Title.Render(" Hour Of Day ") +
+		m.paletteFor("velocity").Border.Render(strings.Repeat("─", max(0, leftWidth-lipgloss.Width(" Hour Of Day ")-1))) +
+		m.centerDivider("velocity", "velocity").Render("┬") +
+		m.paletteFor("velocity").Title.Render(" Weekly Summary (last 12 weeks) ") +
+		m.paletteFor("velocity").Border.Render(strings.Repeat("─", max(0, rightWidth-lipgloss.Width(" Weekly Summary (last 12 weeks) ")-1))+"┤")
+
+	contentHeight := max(1, height-1)
+	left := strings.Split(fitLines(m.renderVelocityHourDetail(leftWidth-2, contentHeight), contentHeight), "\n")
+	right := strings.Split(fitLines(m.renderVelocityWeeklyDetail(rightWidth-2, contentHeight), contentHeight), "\n")
+
+	lines := []string{header}
+	for idx := 0; idx < contentHeight; idx++ {
+		lines = append(lines,
+			m.paletteFor("velocity").Border.Render("│")+
+				padRight(truncate(left[idx], leftWidth-1), leftWidth-1)+
+				m.centerDivider("velocity", "velocity").Render("│")+
+				padRight(truncate(right[idx], rightWidth-1), rightWidth-1)+
+				m.paletteFor("velocity").Border.Render("│"),
+		)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderVelocityHourDetail(width, height int) string {
+	values := namedValuesToInts(m.snapshot.Commits.Hourly)
+	chartHeight := max(6, height-2)
+	chartWidth := min(24, max(12, width-6))
+	rows := columnChart(values, chartWidth, chartHeight)
+	lines := make([]string, 0, height)
+	for _, row := range rows {
+		lines = append(lines, m.paletteFor("velocity").Bar.Render(row))
+	}
+	labels := make([]string, 0, chartWidth/2+1)
+	for hour := 0; hour < 24; hour += 2 {
+		labels = append(labels, fmt.Sprintf("%2d", hour))
+	}
+	lines = append(lines, strings.Join(labels, " "))
+	lines = append(lines, m.theme.Muted.Render("hour (local repo time)"))
+	return strings.Join(trimLines(lines, height), "\n")
+}
+
+func (m Model) renderVelocityWeeklyDetail(width, height int) string {
+	weekly := m.snapshot.Commits.Weekly
+	slots := clamp(height, 4, 12)
+	if len(weekly) > slots {
+		weekly = weekly[len(weekly)-slots:]
+	}
+	maxValue := 1
+	for _, entry := range weekly {
+		if entry.Value > maxValue {
+			maxValue = entry.Value
+		}
+	}
+	lines := make([]string, 0, len(weekly))
+	for idx, entry := range weekly {
+		label := fmt.Sprintf("W-%d", len(weekly)-idx-1)
+		if idx == len(weekly)-1 {
+			label = "Now"
+		}
+		lines = append(lines, fmt.Sprintf("%-5s %s %4d", label, meterBar(entry.Value, maxValue, clamp(width-14, 12, 32), m.paletteFor("velocity").Bar, m.theme.Muted), entry.Value))
+	}
 	return strings.Join(trimLines(lines, height), "\n")
 }
 

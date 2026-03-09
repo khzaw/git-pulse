@@ -91,6 +91,30 @@ func columnChart(values []int, width, height int) []string {
 	return out
 }
 
+func renderAxisColumnChart(values []int, width, height int) []string {
+	if width <= 6 || height <= 1 {
+		return []string{}
+	}
+	chart := columnChart(values, width-5, height)
+	maxValue := 0
+	for _, value := range values {
+		if value > maxValue {
+			maxValue = value
+		}
+	}
+
+	lines := make([]string, 0, height+1)
+	for row := 0; row < height; row++ {
+		level := 0
+		if height > 1 {
+			level = int(math.Round(float64(maxValue) * float64(height-row-1) / float64(height-1)))
+		}
+		lines = append(lines, fmt.Sprintf("%3d│%s", level, padRight(chart[row], width-4)))
+	}
+	lines = append(lines, "   0└"+strings.Repeat("─", width-5))
+	return lines
+}
+
 func progressBar(value, total, width int) string {
 	if width <= 0 {
 		return ""

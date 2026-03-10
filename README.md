@@ -1,20 +1,45 @@
-# git-pulse
+<p align="center">
+  <img src=".github/screenshots/dashboard.png" alt="git-pulse dashboard" width="900">
+</p>
 
-`git-pulse` is a Go TUI dashboard for repository activity. It focuses on dense, fast local analytics with optional GitHub pull request cycle metrics when the repo has a GitHub remote.
+<h1 align="center">git-pulse</h1>
 
-## Current capabilities
+<p align="center">
+  <strong>A btop-style terminal dashboard for git repository analytics.</strong><br>
+  Commit velocity, author stats, file hotspots, branch health, code churn, and PR cycle times — all from your terminal.
+</p>
 
-- Commit velocity trends across `7d`, `30d`, `90d`, `1y`, and `all`
-- Author activity, new contributors, and bus-factor style concentration
-- File and directory hotspots by touch frequency and churn
-- Branch freshness and release cadence from local branches and tags
-- Optional GitHub PR cycle, review, throughput, and aging summaries
-- Snapshot export as JSON, Markdown, or CSV for CI/reporting
+<p align="center">
+  <a href="#installation">Installation</a> •
+  <a href="#usage">Usage</a> •
+  <a href="#configuration">Configuration</a> •
+  <a href="#license">License</a>
+</p>
 
-## Install
+---
+
+## What is this?
+
+`git-pulse` scans any git repository and renders a dense, information-rich TUI dashboard. It shows you what's actually happening in a codebase — who's active, what files are churning, how fast PRs are merging, and whether your bus factor should worry you.
+
+Everything runs locally via `go-git`. If the repo has a GitHub remote and a `GITHUB_TOKEN`, it also pulls PR cycle time, review coverage, and throughput metrics in the background.
+
+<p align="center">
+  <img src=".github/screenshots/commit velocity.png" alt="Commit velocity deep-dive" width="900">
+</p>
+
+## Installation
+
+**From source** (requires Go 1.24+):
 
 ```bash
-git clone <your-remote> git-pulse
+go install github.com/khzaw/git-pulse/cmd/git-pulse@latest
+```
+
+Or clone and build:
+
+```bash
+git clone https://github.com/khzaw/git-pulse.git
 cd git-pulse
 make build
 ./bin/git-pulse
@@ -22,71 +47,62 @@ make build
 
 ## Usage
 
-Launch the dashboard in the current repository:
+Run it inside any git repository:
 
 ```bash
-cd /path/to/repo
 git-pulse
 ```
 
-Generate non-interactive output:
+### Non-interactive export
 
 ```bash
-cd /path/to/repo
-git-pulse --json
-git-pulse --markdown
-git-pulse --csv
-git-pulse --ci
-git-pulse --json --remote
+git-pulse --json            # JSON snapshot
+git-pulse --markdown        # Markdown report
+git-pulse --csv             # CSV summary
+git-pulse --ci              # CI-friendly JSON
+git-pulse --json --remote   # Include GitHub PR data
 ```
 
-`--remote` opts snapshot/export modes into GitHub pull request data. Interactive TUI mode loads local stats first and fetches remote PR data in the background.
+### Keyboard shortcuts
 
-If the repository points at GitHub, `git-pulse` will attempt to fetch pull request metrics. Set `GITHUB_TOKEN` for higher API limits.
+| Key | Action |
+|-----|--------|
+| `tab` / `shift+tab` | Cycle panel focus |
+| `1`–`6` | Jump to panel |
+| `t` | Cycle time window (7d → 30d → 90d → 1y → all) |
+| `r` | Refresh |
+| `q` | Quit |
 
-## Keybindings
+### GitHub PR metrics
 
-- `tab` / `shift+tab`: cycle panel focus
-- `1`-`6`: jump directly to a panel
-- `t`: cycle time window
-- `r`: refresh metrics
-- `q` / `ctrl+c`: quit
+If your repo's `origin` remote points to GitHub, PR data loads automatically. Set `GITHUB_TOKEN` for higher API rate limits:
 
-## Config
+```bash
+export GITHUB_TOKEN=ghp_...
+git-pulse
+```
 
-Example config:
+## Configuration
+
+Optional `.git-pulse.yml` in your repo root or passed via `--config`:
 
 ```yaml
 repo_path: .
 theme: tokyo-night
 refresh_seconds: 60
-default_window: 30d
-```
-
-Use it with:
-
-```bash
-git-pulse --config .git-pulse.yml
+default_window: 30d     # 7d | 30d | 90d | 1y | all
 ```
 
 ## Development
 
 ```bash
-make fmt
-make test
-make test-race
-make build
+make build       # Build to ./bin/git-pulse
+make test        # Run tests
+make test-race   # Race detector
+make fmt         # Format
+make check       # fmt + test
 ```
-
-## Architecture
-
-- `internal/git`: local repository scanning via `go-git`
-- `internal/aggregator`: windowed metric aggregation
-- `internal/remote`: remote detection plus GitHub PR/review summarization
-- `internal/dashboard`: shared loader for TUI and export modes
-- `internal/tui`: Bubble Tea dashboard and rendering helpers
-- `pkg/export`: JSON, Markdown, and CSV snapshot output
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+[MIT](./LICENSE)

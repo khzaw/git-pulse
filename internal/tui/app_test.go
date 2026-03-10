@@ -100,7 +100,7 @@ func TestCompactModeShowsFocusedPanelOnly(t *testing.T) {
 	model.width = 80
 	model.height = 24
 	model.loading = false
-	model.focused = 2
+	model.focused = 3
 	model.snapshot = aggregator.Snapshot{
 		Authors: aggregator.AuthorActivity{
 			Leaderboard: []aggregator.AuthorSummary{{Name: "Ada", Commits: 5}},
@@ -108,7 +108,7 @@ func TestCompactModeShowsFocusedPanelOnly(t *testing.T) {
 	}
 
 	view := model.View()
-	require.Contains(t, view, "panel 3/6")
+	require.Contains(t, view, "panel 4/6")
 	require.Contains(t, view, "File Hotspots")
 	require.NotContains(t, view, "Authors Active")
 }
@@ -262,7 +262,7 @@ func TestRenderVelocityUsesMultiLineChart(t *testing.T) {
 
 	view := model.renderVelocity(70, 18)
 	require.Contains(t, view, "Weekly")
-	require.Contains(t, view, "Day-of-Week Heatmap")
+	require.Contains(t, view, "M  T  W  T  F  S  S")
 	require.GreaterOrEqual(t, strings.Count(view, "█"), 4)
 }
 
